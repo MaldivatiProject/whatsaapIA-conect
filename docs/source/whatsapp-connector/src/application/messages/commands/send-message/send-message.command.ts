@@ -1,0 +1,8 @@
+export class SendMessageCommand {
+  constructor(
+    readonly sessionId: string,
+    readonly to: string,
+    readonly text: string,
+    readonly quotedMessageId?: string,
+  ) {}
+}

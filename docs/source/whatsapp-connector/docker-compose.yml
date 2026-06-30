@@ -1,0 +1,95 @@
+version: '3.9'
+
+services:
+  whatsapp-connector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    image: whatsapp-connector:latest
+    container_name: whatsapp-connector
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      PORT: ${PORT:-3000}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      SESSION_PATH: /app/sessions
+      MAX_SESSIONS: ${MAX_SESSIONS:-10}
+      SESSION_PROVIDER: ${SESSION_PROVIDER:-filesystem}
+      RECONNECT_INTERVAL_MS: ${RECONNECT_INTERVAL_MS:-5000}
+      MAX_RECONNECT_ATTEMPTS: ${MAX_RECONNECT_ATTEMPTS:-5}
+      HEARTBEAT_INTERVAL_MS: ${HEARTBEAT_INTERVAL_MS:-30000}
+      ENABLE_WEBSOCKET: ${ENABLE_WEBSOCKET:-true}
+      ENABLE_REST: ${ENABLE_REST:-true}
+      ENABLE_EVENTS: ${ENABLE_EVENTS:-true}
+      ENABLE_REDIS: ${ENABLE_REDIS:-false}
+      REDIS_URL: ${REDIS_URL:-}
+      ENABLE_POSTGRES: ${ENABLE_POSTGRES:-false}
+      DATABASE_URL: ${DATABASE_URL:-}
+      WEBHOOK_ENABLED: ${WEBHOOK_ENABLED:-false}
+      WEBHOOK_URL: ${WEBHOOK_URL:-}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-}
+      CORS_ENABLED: ${CORS_ENABLED:-true}
+      CORS_ORIGINS: ${CORS_ORIGINS:-*}
+      MAX_MEDIA_SIZE_MB: ${MAX_MEDIA_SIZE_MB:-16}
+      RATE_LIMIT_MAX_PER_MINUTE: ${RATE_LIMIT_MAX_PER_MINUTE:-20}
+      RATE_LIMIT_MIN_DELAY_MS: ${RATE_LIMIT_MIN_DELAY_MS:-500}
+    volumes:
+      - sessions_data:/app/sessions
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    depends_on:
+      redis:
+        condition: service_healthy
+        required: false
+      postgres:
+        condition: service_healthy
+        required: false
+
+  # ── Optional: Redis ────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: whatsapp-connector-redis
+    restart: unless-stopped
+    profiles: ["redis"]
+    ports:
+      - "6379:6379"
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ── Optional: PostgreSQL ───────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: whatsapp-connector-postgres
+    restart: unless-stopped
+    profiles: ["postgres"]
+    environment:
+      POSTGRES_DB: whatsapp_connector
+      POSTGRES_USER: ${POSTGRES_USER:-wac}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wac_secret}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wac} -d whatsapp_connector"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  sessions_data:
+  redis_data:
+  postgres_data:

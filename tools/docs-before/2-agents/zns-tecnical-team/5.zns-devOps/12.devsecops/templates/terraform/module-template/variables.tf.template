@@ -1,0 +1,85 @@
+# ============================================================================
+# [MODULE_NAME] MODULE - INPUT VARIABLES
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# REQUIRED VARIABLES
+# ----------------------------------------------------------------------------
+
+variable "name_prefix" {
+  description = "Prefix for all resource names (e.g., myapp-prod)"
+  type        = string
+
+  validation {
+    condition     = can(regex("^[a-z0-9-]+$", var.name_prefix))
+    error_message = "name_prefix must contain only lowercase letters, numbers, and hyphens"
+  }
+}
+
+variable "environment" {
+  description = "Environment name (dev, staging, prod)"
+  type        = string
+
+  validation {
+    condition     = contains(["dev", "staging", "prod"], var.environment)
+    error_message = "environment must be one of: dev, staging, prod"
+  }
+}
+
+# ----------------------------------------------------------------------------
+# OPTIONAL VARIABLES - GENERAL
+# ----------------------------------------------------------------------------
+
+variable "tags" {
+  description = "Additional tags to apply to all resources"
+  type        = map(string)
+  default     = {}
+}
+
+# ----------------------------------------------------------------------------
+# OPTIONAL VARIABLES - MODULE SPECIFIC
+# ----------------------------------------------------------------------------
+
+# TODO: Añadir variables específicas del módulo
+# Ejemplo:
+
+# variable "instance_type" {
+#   description = "EC2 instance type"
+#   type        = string
+#   default     = "t3.medium"
+#
+#   validation {
+#     condition     = can(regex("^t3\\.|^m6i\\.|^c6i\\.", var.instance_type))
+#     error_message = "instance_type must be t3, m6i, or c6i family"
+#   }
+# }
+
+# variable "enable_feature" {
+#   description = "Whether to enable optional feature X"
+#   type        = bool
+#   default     = false
+# }
+
+# variable "config" {
+#   description = "Configuration object for the module"
+#   type = object({
+#     setting1 = string
+#     setting2 = number
+#     setting3 = optional(bool, false)
+#   })
+#   default = {
+#     setting1 = "default"
+#     setting2 = 100
+#     setting3 = false
+#   }
+# }
+
+# ----------------------------------------------------------------------------
+# SENSITIVE VARIABLES
+# ----------------------------------------------------------------------------
+
+# variable "secret_value" {
+#   description = "Sensitive value (e.g., password, API key)"
+#   type        = string
+#   sensitive   = true
+# }

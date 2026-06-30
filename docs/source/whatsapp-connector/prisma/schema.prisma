@@ -1,0 +1,21 @@
+// Only needed when SESSION_PROVIDER=postgres / ENABLE_POSTGRES=true
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model WhatsappSession {
+  pkid_session Int      @id @default(autoincrement())
+  session_id   String   @unique @db.VarChar(64)
+  status_json  String   @db.Text
+  config_json  String   @db.Text
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  @@map("whatsapp_session")
+}

@@ -1,0 +1,170 @@
+# ============================================================================
+# TERRAFORM MAKEFILE
+# ============================================================================
+# Automatización de comandos Terraform comunes
+# Uso: make [target] ENV=[dev|staging|prod]
+# ============================================================================
+
+.PHONY: help init plan apply destroy fmt validate lint security docs clean
+
+# Variables
+ENV ?= dev
+TF_DIR = environments/$(ENV)
+TF_VARS = -var-file=terraform.tfvars
+
+# Colores
+GREEN  := \033[0;32m
+YELLOW := \033[0;33m
+RED    := \033[0;31m
+NC     := \033[0m # No Color
+
+# Default target
+.DEFAULT_GOAL := help
+
+# ============================================================================
+# HELP
+# ============================================================================
+
+help: ## Mostrar esta ayuda
+	@echo ""
+	@echo "$(GREEN)Terraform Makefile$(NC)"
+	@echo "=================="
+	@echo ""
+	@echo "$(YELLOW)Uso:$(NC) make [target] ENV=[dev|staging|prod]"
+	@echo ""
+	@echo "$(YELLOW)Targets disponibles:$(NC)"
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-15s$(NC) %s\n", $$1, $$2}'
+	@echo ""
+	@echo "$(YELLOW)Ejemplos:$(NC)"
+	@echo "  make plan ENV=dev        # Plan para desarrollo"
+	@echo "  make apply ENV=prod      # Apply para producción"
+	@echo ""
+
+# ============================================================================
+# TERRAFORM COMMANDS
+# ============================================================================
+
+init: ## Inicializar Terraform
+	@echo "$(GREEN)>>> Inicializando Terraform para $(ENV)...$(NC)"
+	cd $(TF_DIR) && terraform init -upgrade
+
+plan: validate ## Generar plan de ejecución
+	@echo "$(GREEN)>>> Generando plan para $(ENV)...$(NC)"
+	cd $(TF_DIR) && terraform plan $(TF_VARS) -out=tfplan
+
+apply: ## Aplicar cambios (requiere plan previo)
+	@echo "$(YELLOW)>>> Aplicando cambios en $(ENV)...$(NC)"
+	@read -p "¿Estás seguro de aplicar en $(ENV)? [y/N] " confirm && [ "$$confirm" = "y" ]
+	cd $(TF_DIR) && terraform apply tfplan
+
+apply-auto: ## Aplicar cambios sin confirmación (CI/CD)
+	@echo "$(YELLOW)>>> Aplicando cambios en $(ENV) (auto-approve)...$(NC)"
+	cd $(TF_DIR) && terraform apply -auto-approve $(TF_VARS)
+
+destroy: ## Destruir infraestructura
+	@echo "$(RED)>>> DESTRUYENDO infraestructura en $(ENV)...$(NC)"
+	@read -p "¿SEGURO que quieres DESTRUIR $(ENV)? Escribe '$(ENV)' para confirmar: " confirm && [ "$$confirm" = "$(ENV)" ]
+	cd $(TF_DIR) && terraform destroy $(TF_VARS)
+
+refresh: ## Actualizar state con infraestructura real
+	@echo "$(GREEN)>>> Actualizando state para $(ENV)...$(NC)"
+	cd $(TF_DIR) && terraform refresh $(TF_VARS)
+
+# ============================================================================
+# VALIDATION & LINTING
+# ============================================================================
+
+fmt: ## Formatear código Terraform
+	@echo "$(GREEN)>>> Formateando código...$(NC)"
+	terraform fmt -recursive
+
+fmt-check: ## Verificar formato sin modificar
+	@echo "$(GREEN)>>> Verificando formato...$(NC)"
+	terraform fmt -check -recursive
+
+validate: init ## Validar configuración
+	@echo "$(GREEN)>>> Validando configuración para $(ENV)...$(NC)"
+	cd $(TF_DIR) && terraform validate
+
+lint: ## Ejecutar TFLint
+	@echo "$(GREEN)>>> Ejecutando TFLint...$(NC)"
+	tflint --recursive --config=.tflint.hcl
+
+security: ## Ejecutar escaneo de seguridad
+	@echo "$(GREEN)>>> Ejecutando tfsec...$(NC)"
+	tfsec .
+	@echo "$(GREEN)>>> Ejecutando checkov...$(NC)"
+	checkov -d . --framework terraform --quiet
+
+# ============================================================================
+# DOCUMENTATION
+# ============================================================================
+
+docs: ## Generar documentación con terraform-docs
+	@echo "$(GREEN)>>> Generando documentación...$(NC)"
+	@for dir in modules/*/; do \
+		echo "Procesando $$dir..."; \
+		terraform-docs markdown table "$$dir" > "$$dir/README.md"; \
+	done
+	@echo "$(GREEN)>>> Documentación generada$(NC)"
+
+# ============================================================================
+# STATE MANAGEMENT
+# ============================================================================
+
+state-list: ## Listar recursos en state
+	@echo "$(GREEN)>>> Recursos en state de $(ENV):$(NC)"
+	cd $(TF_DIR) && terraform state list
+
+state-show: ## Mostrar recurso específico (RESOURCE=aws_xxx.name)
+	@echo "$(GREEN)>>> Mostrando $(RESOURCE):$(NC)"
+	cd $(TF_DIR) && terraform state show $(RESOURCE)
+
+output: ## Mostrar outputs
+	@echo "$(GREEN)>>> Outputs de $(ENV):$(NC)"
+	cd $(TF_DIR) && terraform output
+
+# ============================================================================
+# UTILITIES
+# ============================================================================
+
+graph: ## Generar gráfico de dependencias
+	@echo "$(GREEN)>>> Generando gráfico para $(ENV)...$(NC)"
+	cd $(TF_DIR) && terraform graph | dot -Tpng > graph.png
+	@echo "Gráfico guardado en $(TF_DIR)/graph.png"
+
+cost: ## Estimar costos con Infracost
+	@echo "$(GREEN)>>> Estimando costos para $(ENV)...$(NC)"
+	infracost breakdown --path=$(TF_DIR) --format=table
+
+clean: ## Limpiar archivos temporales
+	@echo "$(GREEN)>>> Limpiando archivos temporales...$(NC)"
+	find . -name "*.tfplan" -delete
+	find . -name ".terraform.lock.hcl" -delete
+	find . -type d -name ".terraform" -exec rm -rf {} + 2>/dev/null || true
+	@echo "$(GREEN)>>> Limpieza completada$(NC)"
+
+# ============================================================================
+# PRE-COMMIT
+# ============================================================================
+
+pre-commit-install: ## Instalar pre-commit hooks
+	@echo "$(GREEN)>>> Instalando pre-commit hooks...$(NC)"
+	pre-commit install
+
+pre-commit-run: ## Ejecutar pre-commit en todos los archivos
+	@echo "$(GREEN)>>> Ejecutando pre-commit...$(NC)"
+	pre-commit run --all-files
+
+# ============================================================================
+# CI/CD PIPELINE
+# ============================================================================
+
+ci-validate: fmt-check lint security validate ## Validación completa para CI
+	@echo "$(GREEN)>>> Validación CI completada$(NC)"
+
+ci-plan: ci-validate plan ## Plan completo para CI
+	@echo "$(GREEN)>>> Plan CI completado$(NC)"
+
+ci-apply: ci-plan apply-auto ## Apply completo para CI (sin confirmación)
+	@echo "$(GREEN)>>> Apply CI completado$(NC)"

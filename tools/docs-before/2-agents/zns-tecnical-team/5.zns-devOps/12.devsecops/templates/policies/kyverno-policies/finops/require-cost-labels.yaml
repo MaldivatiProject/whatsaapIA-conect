@@ -1,0 +1,197 @@
+# =============================================================================
+# KYVERNO POLICY: Require Cost Allocation Labels
+# FinOps Governance Policy
+# =============================================================================
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: require-cost-labels
+  annotations:
+    policies.kyverno.io/title: Require Cost Allocation Labels
+    policies.kyverno.io/category: FinOps, Governance
+    policies.kyverno.io/severity: high
+    policies.kyverno.io/subject: Deployment, StatefulSet, DaemonSet
+    policies.kyverno.io/minversion: 1.6.0
+    policies.kyverno.io/description: >-
+      All workloads must have cost allocation labels to enable proper 
+      showback/chargeback reporting. Required labels: team, project, 
+      environment, cost-center.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: require-team-label
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+                - DaemonSet
+      validate:
+        message: >-
+          Label 'team' is required for cost allocation.
+          Example: team=platform, team=backend, team=data
+        pattern:
+          metadata:
+            labels:
+              team: "?*"
+    
+    - name: require-project-label
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+                - DaemonSet
+      validate:
+        message: >-
+          Label 'project' is required for cost allocation.
+          Example: project=webapp, project=api, project=ml-pipeline
+        pattern:
+          metadata:
+            labels:
+              project: "?*"
+    
+    - name: require-environment-label
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+                - DaemonSet
+      validate:
+        message: >-
+          Label 'environment' is required for cost allocation.
+          Allowed values: development, staging, production
+        pattern:
+          metadata:
+            labels:
+              environment: "development | staging | production"
+    
+    - name: require-cost-center-label
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+                - DaemonSet
+      validate:
+        message: >-
+          Label 'cost-center' is required for chargeback.
+          Format: CC-XXXX (e.g., CC-1001)
+        pattern:
+          metadata:
+            labels:
+              cost-center: "CC-????"
+
+---
+# =============================================================================
+# KYVERNO POLICY: Add Default Labels (Mutating)
+# FinOps Governance Policy
+# =============================================================================
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: add-default-labels
+  annotations:
+    policies.kyverno.io/title: Add Default Labels
+    policies.kyverno.io/category: FinOps
+    policies.kyverno.io/severity: low
+    policies.kyverno.io/subject: Pod
+    policies.kyverno.io/description: >-
+      Automatically adds default labels for resources that are missing them,
+      while preserving existing labels.
+spec:
+  background: false
+  rules:
+    - name: add-managed-by-label
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+      mutate:
+        patchStrategicMerge:
+          metadata:
+            labels:
+              +(app.kubernetes.io/managed-by): kyverno
+              +(finops.company.com/tracked): "true"
+              +(finops.company.com/policy-version): "v1"
+
+---
+# =============================================================================
+# KYVERNO POLICY: Validate Cost Center Format
+# FinOps Governance Policy  
+# =============================================================================
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: validate-cost-center-format
+  annotations:
+    policies.kyverno.io/title: Validate Cost Center Format
+    policies.kyverno.io/category: FinOps
+    policies.kyverno.io/severity: medium
+    policies.kyverno.io/description: >-
+      Validates that cost-center labels follow the correct format (CC-XXXX)
+      and correspond to valid cost centers.
+spec:
+  validationFailureAction: Enforce
+  background: true
+  rules:
+    - name: validate-cost-center-pattern
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+                - DaemonSet
+      validate:
+        message: >-
+          Cost center '{{request.object.metadata.labels.cost-center}}' is invalid.
+          Must match format CC-XXXX where X is a digit (e.g., CC-1001, CC-2345).
+        pattern:
+          metadata:
+            labels:
+              cost-center: "CC-[0-9][0-9][0-9][0-9]"
+
+---
+# =============================================================================
+# KYVERNO POLICY: Propagate Labels to Pods
+# FinOps Governance Policy
+# =============================================================================
+apiVersion: kyverno.io/v1
+kind: ClusterPolicy
+metadata:
+  name: propagate-cost-labels-to-pods
+  annotations:
+    policies.kyverno.io/title: Propagate Cost Labels to Pods
+    policies.kyverno.io/category: FinOps
+    policies.kyverno.io/description: >-
+      Ensures that cost allocation labels from Deployments are propagated
+      to the Pod template for accurate cost attribution at pod level.
+spec:
+  background: false
+  rules:
+    - name: propagate-labels
+      match:
+        any:
+          - resources:
+              kinds:
+                - Deployment
+                - StatefulSet
+      mutate:
+        patchStrategicMerge:
+          spec:
+            template:
+              metadata:
+                labels:
+                  +(team): "{{request.object.metadata.labels.team}}"
+                  +(project): "{{request.object.metadata.labels.project}}"
+                  +(environment): "{{request.object.metadata.labels.environment}}"
+                  +(cost-center): "{{request.object.metadata.labels.cost-center}}"

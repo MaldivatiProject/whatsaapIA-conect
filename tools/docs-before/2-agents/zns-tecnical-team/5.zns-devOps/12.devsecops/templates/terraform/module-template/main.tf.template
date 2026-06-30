@@ -1,0 +1,46 @@
+# ============================================================================
+# [MODULE_NAME] MODULE - MAIN CONFIGURATION
+# ============================================================================
+# Description: [Breve descripción del módulo]
+# Author: Platform Team
+# Version: 1.0.0
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# RESOURCES
+# ----------------------------------------------------------------------------
+
+# TODO: Añadir recursos principales del módulo
+# Ejemplo:
+
+# resource "aws_[resource_type]" "main" {
+#   name = "${local.name_prefix}-[resource]"
+#
+#   # Configuración del recurso
+#   setting1 = var.setting1
+#   setting2 = var.setting2
+#
+#   # Configuración condicional
+#   dynamic "optional_block" {
+#     for_each = var.enable_optional ? [1] : []
+#     content {
+#       # ...
+#     }
+#   }
+#
+#   # Tags siempre al final
+#   tags = merge(local.common_tags, {
+#     Name = "${local.name_prefix}-[resource]"
+#   })
+#
+#   # Lifecycle si es necesario
+#   lifecycle {
+#     create_before_destroy = true
+#   }
+# }
+
+# ----------------------------------------------------------------------------
+# SUPPORTING RESOURCES
+# ----------------------------------------------------------------------------
+
+# TODO: Añadir recursos de soporte (IAM, Security Groups, etc.)

@@ -1,0 +1,57 @@
+# ============================================================================
+# [MODULE_NAME] MODULE - OUTPUT VALUES
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# PRIMARY OUTPUTS
+# ----------------------------------------------------------------------------
+
+# TODO: Añadir outputs principales del módulo
+# Ejemplo:
+
+# output "id" {
+#   description = "The ID of the main resource"
+#   value       = aws_[resource].main.id
+# }
+
+# output "arn" {
+#   description = "The ARN of the main resource"
+#   value       = aws_[resource].main.arn
+# }
+
+# ----------------------------------------------------------------------------
+# CONDITIONAL OUTPUTS
+# ----------------------------------------------------------------------------
+
+# output "optional_feature_id" {
+#   description = "ID of optional feature (null if not enabled)"
+#   value       = var.enable_feature ? aws_[resource].optional[0].id : null
+# }
+
+# ----------------------------------------------------------------------------
+# COMPUTED OUTPUTS
+# ----------------------------------------------------------------------------
+
+# output "endpoint" {
+#   description = "Endpoint URL for the service"
+#   value       = "https://${aws_[resource].main.dns_name}"
+# }
+
+# ----------------------------------------------------------------------------
+# MAP OUTPUTS (for for_each resources)
+# ----------------------------------------------------------------------------
+
+# output "resource_ids" {
+#   description = "Map of resource names to their IDs"
+#   value       = { for k, v in aws_[resource].items : k => v.id }
+# }
+
+# ----------------------------------------------------------------------------
+# SENSITIVE OUTPUTS
+# ----------------------------------------------------------------------------
+
+# output "secret_arn" {
+#   description = "ARN of the secret (for reference only)"
+#   value       = aws_secretsmanager_secret.main.arn
+#   sensitive   = true
+# }

@@ -11,8 +11,17 @@ export class InMemorySessionRepository implements SessionRepository {
     return this.store.get(id) ?? null;
   }
 
+  async findByIdAndOwner(id: SessionId, ownerId: string): Promise<Session | null> {
+    const session = this.store.get(id);
+    return session && session.isOwnedBy(ownerId) ? session : null;
+  }
+
   async findAll(): Promise<Session[]> {
     return [...this.store.values()];
+  }
+
+  async findAllByOwner(ownerId: string): Promise<Session[]> {
+    return [...this.store.values()].filter((s) => s.isOwnedBy(ownerId));
   }
 
   async save(session: Session): Promise<void> {

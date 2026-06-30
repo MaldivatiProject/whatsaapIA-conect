@@ -163,7 +163,8 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
         const normalized = jidNormalizedUser(String(jid));
         if (normalized.endsWith('@lid')) {
           map.set(normalized, String(phone));
-          this.logger.log(`[LID] session=${sessionId} phoneNumberShare resolved ${normalized} → ${String(phone)}`);
+          // PII-safe: never log raw phone numbers / JIDs — hash them.
+          this.logger.log(`[LID] session=${sessionId} phoneNumberShare resolved ${hashJid(normalized)} → ${hashJid(String(phone))}`);
         }
       }
     });
@@ -203,7 +204,8 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
       await this.sessions.save(session);
       await this.eventPublisher.publishMany([...session.domainEvents] as never[]);
       session.clearDomainEvents();
-      this.logger.log(`Session ${sessionId} connected (phone: ${phone})`);
+      // PII-safe: log a hash of the phone, never the number itself.
+      this.logger.log(`Session ${sessionId} connected (phone: ${hashJid(phone)})`);
       return;
     }
 
@@ -254,7 +256,7 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
     const resolved = this.lidToPhone.get(sessionId)?.get(normalized);
     if (!resolved) {
       this.logger.warn(
-        `[LID] session=${sessionId} unresolved LID=${normalized} — contact not in address book or sync pending (map-size=${this.lidToPhone.get(sessionId)?.size ?? 0})`,
+        `[LID] session=${sessionId} unresolved LID=${hashJid(normalized)} — contact not in address book or sync pending (map-size=${this.lidToPhone.get(sessionId)?.size ?? 0})`,
       );
     }
     return resolved ?? jid;

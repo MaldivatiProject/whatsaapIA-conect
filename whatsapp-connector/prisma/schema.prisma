@@ -10,12 +10,15 @@ datasource db {
 }
 
 model WhatsappSession {
-  pkid_session Int      @id @default(autoincrement())
+  pkid_session BigInt   @id @default(autoincrement())
   session_id   String   @unique @db.VarChar(64)
+  owner_id     String   @db.VarChar(128)
   status_json  String   @db.Text
   config_json  String   @db.Text
   created_at   DateTime @default(now())
   updated_at   DateTime @updatedAt
 
+  // Ownership-scoped queries (BOLA prevention) hit this index.
+  @@index([owner_id])
   @@map("whatsapp_session")
 }

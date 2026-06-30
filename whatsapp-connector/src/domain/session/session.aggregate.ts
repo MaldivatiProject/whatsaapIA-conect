@@ -13,6 +13,7 @@ import {
 
 export interface SessionSnapshot {
   id: string;
+  ownerId: string;
   status: SessionStatus;
   config: SessionConfig;
   createdAt: Date;
@@ -24,17 +25,22 @@ export class Session {
 
   private constructor(
     private readonly _id: SessionId,
+    private readonly _ownerId: string,
     private _status: SessionStatus,
     private readonly _config: SessionConfig,
     private readonly _createdAt: Date,
     private _updatedAt: Date,
   ) {}
 
-  static create(params: { id: string; config?: Partial<SessionConfig> }): Session {
+  static create(params: { id: string; ownerId: string; config?: Partial<SessionConfig> }): Session {
     const id = createSessionId(params.id);
+    const ownerId = params.ownerId?.trim();
+    if (!ownerId) {
+      throw new Error('Session ownerId cannot be empty');
+    }
     const config = createSessionConfig(params.config);
     const now = new Date();
-    const session = new Session(id, SS.pending(), config, now, now);
+    const session = new Session(id, ownerId, SS.pending(), config, now, now);
     session._domainEvents.push(new SessionCreatedEvent(id));
     return session;
   }
@@ -42,11 +48,18 @@ export class Session {
   static reconstitute(snapshot: SessionSnapshot): Session {
     return new Session(
       createSessionId(snapshot.id),
+      // Sessions persisted before ownership existed default to 'legacy' so they remain reachable
+      snapshot.ownerId ?? 'legacy',
       snapshot.status,
       snapshot.config,
       snapshot.createdAt,
       snapshot.updatedAt,
     );
+  }
+
+  /** Ownership check used by the application layer to prevent BOLA/IDOR. */
+  isOwnedBy(ownerId: string): boolean {
+    return this._ownerId === ownerId;
   }
 
   markConnecting(): void {
@@ -88,6 +101,7 @@ export class Session {
   }
 
   get id(): SessionId { return this._id; }
+  get ownerId(): string { return this._ownerId; }
   get status(): SessionStatus { return this._status; }
   get config(): SessionConfig { return this._config; }
   get createdAt(): Date { return this._createdAt; }
@@ -102,6 +116,7 @@ export class Session {
   toSnapshot(): SessionSnapshot {
     return {
       id: this._id,
+      ownerId: this._ownerId,
       status: this._status,
       config: this._config,
       createdAt: this._createdAt,

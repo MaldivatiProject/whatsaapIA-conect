@@ -3,6 +3,7 @@ import type { Redis } from 'ioredis';
 import type { SessionRepository } from '../../domain/session/session.repository';
 import { Session, type SessionSnapshot } from '../../domain/session/session.aggregate';
 import type { SessionId } from '../../domain/session/session-id.vo';
+import { reviveSessionStatus } from '../../domain/session/session-status.vo';
 import { REDIS_CLIENT } from '../baileys/baileys-session.adapter';
 
 const KEY_PREFIX = 'wac:session:';
@@ -22,7 +23,13 @@ export class RedisSessionRepository implements SessionRepository {
     const snapshot = JSON.parse(raw) as SessionSnapshot;
     snapshot.createdAt = new Date(snapshot.createdAt);
     snapshot.updatedAt = new Date(snapshot.updatedAt);
+    snapshot.status = reviveSessionStatus(snapshot.status);
     return Session.reconstitute(snapshot);
+  }
+
+  async findByIdAndOwner(id: SessionId, ownerId: string): Promise<Session | null> {
+    const session = await this.findById(id);
+    return session && session.isOwnedBy(ownerId) ? session : null;
   }
 
   async findAll(): Promise<Session[]> {
@@ -31,6 +38,11 @@ export class RedisSessionRepository implements SessionRepository {
       ids.map((id) => this.findById(id as SessionId)),
     );
     return sessions.filter((s): s is Session => s !== null);
+  }
+
+  async findAllByOwner(ownerId: string): Promise<Session[]> {
+    const all = await this.findAll();
+    return all.filter((s) => s.isOwnedBy(ownerId));
   }
 
   async save(session: Session): Promise<void> {

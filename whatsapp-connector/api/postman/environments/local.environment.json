@@ -1,0 +1,10 @@
+{
+  "name": "whatsapp-connector — local",
+  "values": [
+    { "key": "baseUrl", "value": "http://localhost:3000", "enabled": true },
+    { "key": "apiKey", "value": "", "type": "secret", "enabled": true },
+    { "key": "sessionId", "value": "acme-bot", "enabled": true },
+    { "key": "to", "value": "5491122334455@s.whatsapp.net", "enabled": true }
+  ],
+  "_postman_variable_scope": "environment"
+}

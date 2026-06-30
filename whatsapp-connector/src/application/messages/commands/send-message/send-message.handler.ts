@@ -27,7 +27,7 @@ export class SendMessageHandler {
     const sessionId = createSessionId(command.sessionId);
     validateJid(command.to);
 
-    const session = await this.sessions.findById(sessionId);
+    const session = await this.sessions.findByIdAndOwner(sessionId, command.ownerId);
     if (!session) throw new SessionNotFoundError(command.sessionId);
     if (!session.isConnected) throw new SessionNotConnectedError(command.sessionId);
 

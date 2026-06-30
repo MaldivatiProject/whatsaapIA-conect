@@ -6,18 +6,24 @@ import {
 } from '@nestjs/common';
 import { Observable } from 'rxjs';
 import { tap } from 'rxjs/operators';
-import { requestContext } from '../context/request-context';
-import type { Request, Response } from 'express';
+import { requestContext, type RequestContext } from '../context/request-context';
+import type { Response } from 'express';
+import type { AuthenticatedRequest } from '../auth/api-key.guard';
 
 @Injectable()
 export class CorrelationIdInterceptor implements NestInterceptor {
   intercept(executionCtx: ExecutionContext, next: CallHandler): Observable<unknown> {
-    const request = executionCtx.switchToHttp().getRequest<Request>();
+    const request = executionCtx.switchToHttp().getRequest<AuthenticatedRequest>();
     const correlationId =
       (request.headers['x-correlation-id'] as string | undefined) ?? crypto.randomUUID();
 
+    // ownerId is populated by ApiKeyAuthGuard (runs before interceptors).
+    const ctx: RequestContext = request.ownerId
+      ? { correlationId, ownerId: request.ownerId }
+      : { correlationId };
+
     return new Observable((observer) => {
-      requestContext.run({ correlationId }, () => {
+      requestContext.run(ctx, () => {
         next
           .handle()
           .pipe(

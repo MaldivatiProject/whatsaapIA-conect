@@ -1,6 +1,8 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { ValidationPipe, UnprocessableEntityException } from '@nestjs/common';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { getConfig, getCorsOrigins } from './config/app.config';
 import { PinoLoggerService } from './shared/logging/pino-logger.service';
@@ -10,17 +12,29 @@ import { UnexpectedExceptionFilter } from './shared/filters/unexpected-exception
 import { HttpExceptionFilter } from './shared/filters/http-exception.filter';
 import { DomainExceptionFilter } from './shared/filters/domain-exception.filter';
 import { getCorrelationId } from './shared/context/request-context';
+import { setupOpenApi } from './config/openapi.config';
 
 async function bootstrap(): Promise<void> {
   const config = getConfig();
 
-  const app = await NestFactory.create(AppModule, {
+  // bodyParser disabled here so we can register parsers with a media-aware limit below.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: false,
     bufferLogs: true,
+    bodyParser: false,
   });
 
   const logger = new PinoLoggerService(config);
   app.useLogger(logger);
+
+  // Base64-encoded media inflates ~33%; size validation still happens in the use case.
+  const bodyLimit = `${Math.ceil(config.MAX_MEDIA_SIZE_MB * 1.4) + 1}mb`;
+  app.useBodyParser('json', { limit: bodyLimit });
+  app.useBodyParser('urlencoded', { extended: true, limit: bodyLimit });
+
+  // Security headers. CSP is disabled because the QR/monitor HTML pages are self-rendered
+  // and rely on inline styles + the socket.io client; tighten per-route if needed.
+  app.use(helmet({ contentSecurityPolicy: false }));
 
   if (config.CORS_ENABLED) {
     app.enableCors({ origin: getCorsOrigins(config) });
@@ -57,6 +71,9 @@ async function bootstrap(): Promise<void> {
     new CorrelationIdInterceptor(),
     new LoggingInterceptor(logger),
   );
+
+  // OpenAPI 3.x served at /docs (and raw JSON at /docs-json) in non-production by default.
+  setupOpenApi(app, config);
 
   app.enableShutdownHooks();
 

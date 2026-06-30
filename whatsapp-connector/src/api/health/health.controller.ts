@@ -6,7 +6,10 @@ import {
   MemoryHealthIndicator,
   type HealthCheckResult,
 } from '@nestjs/terminus';
+import { ApiExcludeEndpoint } from '@nestjs/swagger';
 import { SessionManagerService } from '../../infrastructure/baileys/session-manager.service';
+import { Public } from '../../shared/auth/public.decorator';
+import { SkipThrottle } from '@nestjs/throttler';
 
 @Controller('health')
 export class HealthController {
@@ -17,6 +20,7 @@ export class HealthController {
   ) {}
 
   @Get('events-monitor')
+  @ApiExcludeEndpoint()
   eventsMonitor(@Res() res: Response): void {
     const events = [
       'MESSAGE_RECEIVED', 'PRIVATE_MESSAGE_RECEIVED', 'GROUP_MESSAGE_RECEIVED',
@@ -140,10 +144,15 @@ export class HealthController {
     });
   });
 
-  const socket = io({ transports: ['websocket'] });
+  // Reuse the same API key used to open this page so the socket authenticates as the same owner.
+  const apiKey = new URLSearchParams(location.search).get('api_key') || '';
+  const socket = io({ transports: ['websocket'], auth: { token: apiKey } });
   socket.on('connect', () => {
     dotEl.classList.add('connected');
     statusEl.textContent = 'Conectado · 0 eventos';
+  });
+  socket.on('unauthorized', (e) => {
+    statusEl.textContent = 'No autorizado — añade ?api_key=TU_CLAVE a la URL';
   });
   socket.on('disconnect', () => {
     dotEl.classList.remove('connected');
@@ -158,7 +167,10 @@ export class HealthController {
     res.send(html);
   }
 
+  // Liveness/readiness must succeed without credentials (k8s probes) and must not be throttled.
   @Get()
+  @Public()
+  @SkipThrottle()
   @HealthCheck()
   async check(): Promise<HealthCheckResult> {
     return this.health.check([

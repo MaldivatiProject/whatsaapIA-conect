@@ -21,8 +21,8 @@ class MockEventPublisher implements EventPublisherPort {
   async publishMany(es: unknown[]): Promise<void> { this.published.push(...es); }
 }
 
-async function makeConnectedSession(repo: InMemorySessionRepository): Promise<void> {
-  const session = Session.create({ id: 'active-session' });
+async function makeConnectedSession(repo: InMemorySessionRepository, ownerId = 'tenantA'): Promise<void> {
+  const session = Session.create({ id: 'active-session', ownerId });
   session.markConnected('5491122334455');
   session.clearDomainEvents();
   await repo.save(session);
@@ -44,7 +44,7 @@ describe('SendMessageHandler', () => {
     const { handler } = makeHandler(repo);
 
     const result = await handler.execute(
-      new SendMessageCommand('active-session', '5491122334455@s.whatsapp.net', 'Hello!'),
+      new SendMessageCommand('active-session', 'tenantA', '5491122334455@s.whatsapp.net', 'Hello!'),
     );
 
     expect(result.messageId).toBe('generated-msg-id');
@@ -57,7 +57,7 @@ describe('SendMessageHandler', () => {
     const { handler, publisher } = makeHandler(repo);
 
     await handler.execute(
-      new SendMessageCommand('active-session', '5491122334455@s.whatsapp.net', 'Hello!'),
+      new SendMessageCommand('active-session', 'tenantA', '5491122334455@s.whatsapp.net', 'Hello!'),
     );
 
     expect(publisher.published).toHaveLength(1);
@@ -68,18 +68,30 @@ describe('SendMessageHandler', () => {
     const { handler } = makeHandler(repo);
 
     await expect(
-      handler.execute(new SendMessageCommand('unknown', '5491122334455@s.whatsapp.net', 'Hi')),
+      handler.execute(new SendMessageCommand('unknown', 'tenantA', '5491122334455@s.whatsapp.net', 'Hi')),
+    ).rejects.toThrow(SessionNotFoundError);
+  });
+
+  it('prevents BOLA: another owner cannot send from the session (404, not 403)', async () => {
+    const repo = new InMemorySessionRepository();
+    await makeConnectedSession(repo, 'tenantA');
+    const { handler } = makeHandler(repo);
+
+    await expect(
+      handler.execute(
+        new SendMessageCommand('active-session', 'tenantB', '5491122334455@s.whatsapp.net', 'Hi'),
+      ),
     ).rejects.toThrow(SessionNotFoundError);
   });
 
   it('throws SessionNotConnectedError for disconnected session', async () => {
     const repo = new InMemorySessionRepository();
-    const session = Session.create({ id: 'disconnected-session' });
+    const session = Session.create({ id: 'disconnected-session', ownerId: 'tenantA' });
     await repo.save(session);
     const { handler } = makeHandler(repo);
 
     await expect(
-      handler.execute(new SendMessageCommand('disconnected-session', '5491122334455@s.whatsapp.net', 'Hi')),
+      handler.execute(new SendMessageCommand('disconnected-session', 'tenantA', '5491122334455@s.whatsapp.net', 'Hi')),
     ).rejects.toThrow(SessionNotConnectedError);
   });
 
@@ -89,7 +101,7 @@ describe('SendMessageHandler', () => {
     const { handler } = makeHandler(repo);
 
     await expect(
-      handler.execute(new SendMessageCommand('active-session', 'not-a-jid', 'Hi')),
+      handler.execute(new SendMessageCommand('active-session', 'tenantA', 'not-a-jid', 'Hi')),
     ).rejects.toThrow(InvalidJidError);
   });
 });

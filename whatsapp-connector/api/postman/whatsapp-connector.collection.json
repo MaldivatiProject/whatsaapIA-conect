@@ -1,0 +1,145 @@
+{
+  "info": {
+    "name": "whatsapp-connector",
+    "description": "WhatsApp Connector — sessions and messages. All requests (except Health) send the x-api-key header. Sessions are isolated per owner (the key determines the owner).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "apikey",
+    "apikey": [
+      { "key": "key", "value": "x-api-key", "type": "string" },
+      { "key": "value", "value": "{{apiKey}}", "type": "string" },
+      { "key": "in", "value": "header", "type": "string" }
+    ]
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000" },
+    { "key": "sessionId", "value": "acme-bot" },
+    { "key": "to", "value": "5491122334455@s.whatsapp.net" }
+  ],
+  "item": [
+    {
+      "name": "sessions",
+      "item": [
+        {
+          "name": "Create session",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/sessions", "host": ["{{baseUrl}}"], "path": ["sessions"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"maxReconnectAttempts\": 5,\n  \"reconnectIntervalMs\": 5000\n}"
+            },
+            "description": "Creates a session and starts the WhatsApp connection. Returns 201 with { sessionId }. Then scan the QR."
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "originalRequest": { "method": "POST", "url": { "raw": "{{baseUrl}}/sessions" } },
+              "status": "Created",
+              "code": 201,
+              "body": "{\n  \"sessionId\": \"acme-bot\"\n}"
+            },
+            {
+              "name": "409 Already exists",
+              "originalRequest": { "method": "POST", "url": { "raw": "{{baseUrl}}/sessions" } },
+              "status": "Conflict",
+              "code": 409,
+              "body": "{\n  \"type\": \"https://whatsapp-connector/errors/session-already-exists\",\n  \"title\": \"SessionAlreadyExistsError\",\n  \"status\": 409,\n  \"detail\": \"Session 'acme-bot' already exists\",\n  \"correlationId\": \"...\",\n  \"timestamp\": \"2026-06-30T12:00:00.000Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "List sessions",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/sessions", "host": ["{{baseUrl}}"], "path": ["sessions"] },
+            "description": "Lists only the sessions owned by the caller's API key."
+          }
+        },
+        {
+          "name": "Get QR (raw)",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/sessions/{{sessionId}}/qr", "host": ["{{baseUrl}}"], "path": ["sessions", "{{sessionId}}", "qr"] },
+            "description": "Returns the raw QR string and its expiry. 404 if the QR is not currently available."
+          }
+        },
+        {
+          "name": "Reconnect session",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/sessions/{{sessionId}}/reconnect", "host": ["{{baseUrl}}"], "path": ["sessions", "{{sessionId}}", "reconnect"] },
+            "description": "Forces a new connection for a disconnected session. Returns 202."
+          }
+        },
+        {
+          "name": "Disconnect session",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/sessions/{{sessionId}}/disconnect", "host": ["{{baseUrl}}"], "path": ["sessions", "{{sessionId}}", "disconnect"] },
+            "description": "Closes the socket without deleting credentials. Returns 204."
+          }
+        },
+        {
+          "name": "Delete session",
+          "request": {
+            "method": "DELETE",
+            "url": { "raw": "{{baseUrl}}/sessions/{{sessionId}}", "host": ["{{baseUrl}}"], "path": ["sessions", "{{sessionId}}"] },
+            "description": "Logs out and removes the session. Returns 204. 404 if not owned by the caller."
+          }
+        }
+      ]
+    },
+    {
+      "name": "messages",
+      "item": [
+        {
+          "name": "Send text message",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/messages/send", "host": ["{{baseUrl}}"], "path": ["messages", "send"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"to\": \"{{to}}\",\n  \"text\": \"Hello from the connector!\"\n}"
+            },
+            "description": "Sends a text message. Returns 201 with the messageId. 409 if the session is not connected."
+          },
+          "response": [
+            {
+              "name": "201 Created",
+              "originalRequest": { "method": "POST", "url": { "raw": "{{baseUrl}}/messages/send" } },
+              "status": "Created",
+              "code": 201,
+              "body": "{\n  \"messageId\": \"3EB0XXXX\",\n  \"sessionId\": \"acme-bot\",\n  \"to\": \"5491122334455@s.whatsapp.net\",\n  \"sentAt\": \"2026-06-30T12:00:00.000Z\"\n}"
+            }
+          ]
+        },
+        {
+          "name": "Send media",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}/messages/send-media", "host": ["{{baseUrl}}"], "path": ["messages", "send-media"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"sessionId\": \"{{sessionId}}\",\n  \"to\": \"{{to}}\",\n  \"mimeType\": \"image/png\",\n  \"fileName\": \"pixel.png\",\n  \"data\": \"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII=\",\n  \"caption\": \"Optional caption\"\n}"
+            },
+            "description": "Sends base64-encoded media. 413 if larger than MAX_MEDIA_SIZE_MB, 415 if the MIME type is not allowed."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Health (public)",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/health", "host": ["{{baseUrl}}"], "path": ["health"] },
+        "auth": { "type": "noauth" },
+        "description": "Liveness/readiness. Public — no API key required."
+      }
+    }
+  ]
+}

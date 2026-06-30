@@ -11,24 +11,45 @@ import { EventsGateway } from '../websocket/events.gateway';
 import { InMemorySessionRepository } from '../persistence/in-memory.session.repository';
 import { FilesystemSessionRepository } from '../persistence/filesystem.session.repository';
 import { RedisSessionRepository } from '../persistence/redis.session.repository';
+import { PrismaSessionRepository } from '../persistence/prisma.session.repository';
+import type { SessionRepository } from '../../domain/session/session.repository';
 import { APP_CONFIG } from '../../application/shared/tokens';
 import { getConfig } from '../../config/app.config';
+import { Logger } from '@nestjs/common';
 import Redis from 'ioredis';
 
 const config = getConfig();
+const bootstrapLogger = new Logger('BaileysModule');
 
 const sessionRepositoryProvider = {
   provide: SESSION_REPOSITORY,
-  useFactory: (): object => {
-    if (config.SESSION_PROVIDER === 'redis' && config.ENABLE_REDIS && config.REDIS_URL) {
-      const redis = new Redis(config.REDIS_URL);
-      return new RedisSessionRepository(redis);
+  // Reuses the shared REDIS_CLIENT instead of opening a second connection (was a leak).
+  useFactory: (redis: Redis | null): SessionRepository => {
+    switch (config.SESSION_PROVIDER) {
+      case 'redis':
+        if (!redis) {
+          throw new Error(
+            'SESSION_PROVIDER=redis requires ENABLE_REDIS=true and a valid REDIS_URL',
+          );
+        }
+        return new RedisSessionRepository(redis);
+      case 'postgres':
+        if (!config.ENABLE_POSTGRES || !config.DATABASE_URL) {
+          throw new Error(
+            'SESSION_PROVIDER=postgres requires ENABLE_POSTGRES=true and a valid DATABASE_URL',
+          );
+        }
+        return new PrismaSessionRepository();
+      case 'filesystem':
+        return new FilesystemSessionRepository(config.SESSION_PATH);
+      default:
+        bootstrapLogger.warn(
+          `Unknown SESSION_PROVIDER '${String(config.SESSION_PROVIDER)}' — falling back to in-memory (non-persistent)`,
+        );
+        return new InMemorySessionRepository();
     }
-    if (config.SESSION_PROVIDER === 'filesystem') {
-      return new FilesystemSessionRepository(config.SESSION_PATH);
-    }
-    return new InMemorySessionRepository();
   },
+  inject: [REDIS_CLIENT],
 };
 
 const redisClientProvider = {

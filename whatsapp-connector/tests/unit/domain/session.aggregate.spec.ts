@@ -5,7 +5,7 @@ import { SessionQrNotAvailableError } from '../../../src/domain/session/session.
 describe('Session Aggregate', () => {
   describe('create()', () => {
     it('creates session with pending status and emits SessionCreatedEvent', () => {
-      const session = Session.create({ id: 'test-session' });
+      const session = Session.create({ id: 'test-session', ownerId: 'tenantA' });
 
       expect(session.id).toBe('test-session');
       expect(session.status.kind).toBe('pending');
@@ -15,17 +15,30 @@ describe('Session Aggregate', () => {
     });
 
     it('throws when sessionId is empty', () => {
-      expect(() => Session.create({ id: '' })).toThrow();
+      expect(() => Session.create({ id: '', ownerId: 'tenantA' })).toThrow();
     });
 
     it('throws when sessionId has invalid characters', () => {
-      expect(() => Session.create({ id: 'invalid id!' })).toThrow();
+      expect(() => Session.create({ id: 'invalid id!', ownerId: 'tenantA' })).toThrow();
+    });
+
+    it('throws when ownerId is empty', () => {
+      expect(() => Session.create({ id: 'test-session', ownerId: '' })).toThrow();
+    });
+  });
+
+  describe('isOwnedBy()', () => {
+    it('is true only for the owning tenant', () => {
+      const session = Session.create({ id: 'test-session', ownerId: 'tenantA' });
+      expect(session.ownerId).toBe('tenantA');
+      expect(session.isOwnedBy('tenantA')).toBe(true);
+      expect(session.isOwnedBy('tenantB')).toBe(false);
     });
   });
 
   describe('markQrReady()', () => {
     it('transitions to qr_ready and emits QrGeneratedEvent', () => {
-      const session = Session.create({ id: 'test-session' });
+      const session = Session.create({ id: 'test-session', ownerId: 'tenantA' });
       session.clearDomainEvents();
 
       session.markQrReady('qr-code-data');
@@ -39,7 +52,7 @@ describe('Session Aggregate', () => {
 
   describe('markConnected()', () => {
     it('transitions to open and emits SessionConnectedEvent', () => {
-      const session = Session.create({ id: 'test-session' });
+      const session = Session.create({ id: 'test-session', ownerId: 'tenantA' });
       session.clearDomainEvents();
 
       session.markConnected('5491122334455');
@@ -52,7 +65,7 @@ describe('Session Aggregate', () => {
 
   describe('markDisconnected()', () => {
     it('transitions to disconnected status', () => {
-      const session = Session.create({ id: 'test-session' });
+      const session = Session.create({ id: 'test-session', ownerId: 'tenantA' });
       session.markConnected('5491122334455');
       session.clearDomainEvents();
 
@@ -65,7 +78,7 @@ describe('Session Aggregate', () => {
 
   describe('getQrCode()', () => {
     it('throws SessionQrNotAvailableError when status is not qr_ready', () => {
-      const session = Session.create({ id: 'test-session' });
+      const session = Session.create({ id: 'test-session', ownerId: 'tenantA' });
 
       expect(() => session.getQrCode()).toThrow(SessionQrNotAvailableError);
     });
@@ -73,7 +86,7 @@ describe('Session Aggregate', () => {
 
   describe('clearDomainEvents()', () => {
     it('clears all accumulated events', () => {
-      const session = Session.create({ id: 'test-session' });
+      const session = Session.create({ id: 'test-session', ownerId: 'tenantA' });
       expect(session.domainEvents.length).toBeGreaterThan(0);
 
       session.clearDomainEvents();
@@ -84,13 +97,14 @@ describe('Session Aggregate', () => {
 
   describe('reconstitute()', () => {
     it('reconstitutes from snapshot without emitting events', () => {
-      const original = Session.create({ id: 'test-session' });
+      const original = Session.create({ id: 'test-session', ownerId: 'tenantA' });
       original.markConnected('5491122334455');
       const snapshot = original.toSnapshot();
 
       const reconstituted = Session.reconstitute(snapshot);
 
       expect(reconstituted.id).toBe('test-session');
+      expect(reconstituted.ownerId).toBe('tenantA');
       expect(reconstituted.status.kind).toBe('open');
       expect(reconstituted.domainEvents).toHaveLength(0);
     });

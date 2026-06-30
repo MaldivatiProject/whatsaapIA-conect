@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 
 export interface RequestContext {
   correlationId: string;
+  ownerId?: string;
   sessionId?: string;
   messageId?: string;
 }

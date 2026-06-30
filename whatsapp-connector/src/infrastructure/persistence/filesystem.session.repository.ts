@@ -36,6 +36,16 @@ export class FilesystemSessionRepository implements SessionRepository {
     }
   }
 
+  async findByIdAndOwner(id: SessionId, ownerId: string): Promise<Session | null> {
+    const session = await this.findById(id);
+    return session && session.isOwnedBy(ownerId) ? session : null;
+  }
+
+  async findAllByOwner(ownerId: string): Promise<Session[]> {
+    const all = await this.findAll();
+    return all.filter((s) => s.isOwnedBy(ownerId));
+  }
+
   async findAll(): Promise<Session[]> {
     try {
       const files = await readdir(this.metaDir);

@@ -5,10 +5,12 @@ const config: Config = {
   rootDir: '.',
   testRegex: '.*\\.spec\\.ts$',
   transform: { '^.+\\.(t|j)s$': 'ts-jest' },
-  collectCoverageFrom: ['src/**/*.ts', '!src/main.ts', '!src/**/*.module.ts'],
+  setupFiles: ['<rootDir>/tests/setup.ts'],
+  // The ZNS 85% gate applies to domain + application (business logic).
+  collectCoverageFrom: ['src/domain/**/*.ts', 'src/application/**/*.ts'],
   coverageDirectory: 'coverage',
   coverageThreshold: {
-    global: { branches: 70, functions: 80, lines: 80, statements: 80 },
+    global: { branches: 80, functions: 85, lines: 85, statements: 85 },
   },
   testEnvironment: 'node',
   moduleNameMapper: {
@@ -24,6 +26,7 @@ const config: Config = {
       displayName: 'unit',
       testMatch: ['<rootDir>/tests/unit/**/*.spec.ts'],
       transform: { '^.+\\.(t|j)s$': 'ts-jest' },
+      setupFiles: ['<rootDir>/tests/setup.ts'],
       moduleNameMapper: {
         '^@domain/(.*)$': '<rootDir>/src/domain/$1',
         '^@application/(.*)$': '<rootDir>/src/application/$1',
@@ -37,6 +40,7 @@ const config: Config = {
       displayName: 'e2e',
       testMatch: ['<rootDir>/tests/e2e/**/*.spec.ts'],
       transform: { '^.+\\.(t|j)s$': 'ts-jest' },
+      setupFiles: ['<rootDir>/tests/setup.ts'],
       moduleNameMapper: {
         '^@domain/(.*)$': '<rootDir>/src/domain/$1',
         '^@application/(.*)$': '<rootDir>/src/application/$1',

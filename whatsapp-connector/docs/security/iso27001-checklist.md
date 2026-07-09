@@ -15,6 +15,7 @@
 ## A.8.24 / Secrets management
 - [x] Sin secretos en código ni repositorio; `.env` en `.gitignore`.
 - [x] Secretos inyectados por entorno (`API_KEYS`, `WEBHOOK_SECRET`, `DATABASE_URL`).
+- [x] Auth state cifrado en Valkey con AES-256-GCM; clave separada y obligatoria en producción.
 - [ ] Vault/Secrets Manager — **gap**: recomendado para producción. Acción: integrar
       gestor de secretos en el despliegue.
 
@@ -33,9 +34,11 @@
 ## A.8.6 / Disponibilidad y recuperación
 - [x] Health checks liveness/readiness (`@nestjs/terminus`) y `HEALTHCHECK` en Docker.
 - [x] Graceful shutdown (cierre de sockets Baileys en `onModuleDestroy`).
-- [x] Persistencia configurable (filesystem/Redis/Postgres) con reconexión al arranque.
+- [x] Borrado definitivo elimina auth state filesystem/Valkey; disconnect y shutdown
+      no revocan el dispositivo enlazado.
+- [x] Persistencia configurable (filesystem/Valkey/Postgres) con reconexión al arranque.
 - [ ] Backups de credenciales de sesión — **gap**: depende del proveedor. Acción:
-      backup del volumen `sessions/` o de Redis/Postgres según despliegue.
+      backup del volumen `sessions/` o de Valkey/Postgres según despliegue.
 
 ## A.8.26 — Validación de entradas
 - [x] Validación en el borde (`class-validator` + `zod` en config) y en el dominio.
@@ -48,8 +51,7 @@
 
 ## Riesgos residuales
 - Claves API estáticas con rotación manual (mitigación: JWT planificado).
-- `?api_key=` en query puede aparecer en logs de proxy (mitigación: usar header).
-- Caché `sessionId → ownerId` del gateway sin TTL (impacto bajo, sesiones longevas).
+- La rotación de `AUTH_STATE_ENCRYPTION_KEY` requiere un procedimiento de recifrado coordinado.
 
 ## Responsable / siguiente revisor
 - Implementación: Backend Senior. Revisión: Seguridad / Arquitectura ZNS.

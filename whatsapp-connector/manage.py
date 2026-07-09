@@ -242,7 +242,7 @@ OPTION_TITLES = {
     "7":  "lint — whatsapp-connector",
     "8":  "docker build — whatsapp-connector",
     "9":  "docker up — whatsapp-connector",
-    "10": "docker up+redis — whatsapp-connector",
+    "10": "docker up+valkey — whatsapp-connector",
     "11": "docker up+postgres — whatsapp-connector",
     "12": "docker down — whatsapp-connector",
     "13": "docker restart — whatsapp-connector",
@@ -704,7 +704,7 @@ def print_menu(runtime: str):
   {BOLD}{BLUE}── CONTENEDORES ({runtime.upper() if runtime else 'N/A'}) ──────────────────────────{R}
   {WHITE}[8]{R}  Build imagen
   {WHITE}[9]{R}  Levantar (solo app)
-  {WHITE}[10]{R} Levantar + Redis
+  {WHITE}[10]{R} Levantar + Valkey
   {WHITE}[11]{R} Levantar + PostgreSQL
   {WHITE}[12]{R} Detener contenedores
   {WHITE}[13]{R} Reiniciar contenedores
@@ -743,7 +743,7 @@ def _dispatch(choice: str, runtime: str):
         "7":  action_lint,
         "8":  lambda: action_docker_build(runtime),
         "9":  lambda: action_docker_up(runtime),
-        "10": lambda: action_docker_up(runtime, "redis"),
+        "10": lambda: action_docker_up(runtime, "valkey"),
         "11": lambda: action_docker_up(runtime, "postgres"),
         "12": lambda: action_docker_down(runtime),
         "13": lambda: action_docker_restart(runtime),

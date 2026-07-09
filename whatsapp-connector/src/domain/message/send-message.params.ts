@@ -9,8 +9,13 @@ export interface SendMessageParams {
 }
 
 export function validateJid(jid: string): void {
-  // WhatsApp JID format: number@s.whatsapp.net or groupId@g.us
-  if (!/@(s\.whatsapp\.net|g\.us)$/.test(jid)) {
+  // WhatsApp JID format: number@s.whatsapp.net, groupId@g.us, or the
+  // privacy-preserving number@lid form Baileys treats as a first-class,
+  // directly sendable JidServer (see WABinary/jid-utils). @lid senders show up
+  // whenever resolveLid() in baileys-session.adapter.ts can't map them to a
+  // phone JID yet (contact not synced) — rejecting them here would make those
+  // contacts permanently unreachable via /messages/send(-media).
+  if (!/@(s\.whatsapp\.net|g\.us|lid)$/.test(jid)) {
     throw new InvalidJidError(jid);
   }
 }

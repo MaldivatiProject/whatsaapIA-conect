@@ -83,6 +83,9 @@ describe('JID helpers', () => {
     expect(() => validateJid('5491122334455@s.whatsapp.net')).not.toThrow();
     expect(() => validateJid('123-456@g.us')).not.toThrow();
   });
+  it('validateJid accepts @lid jids (unresolved LID contacts)', () => {
+    expect(() => validateJid('99132626702366@lid')).not.toThrow();
+  });
   it('validateJid rejects malformed jids', () => {
     expect(() => validateJid('not-a-jid')).toThrow(InvalidJidError);
   });

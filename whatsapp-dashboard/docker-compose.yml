@@ -1,0 +1,29 @@
+services:
+  whatsapp-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+      args:
+        NEXT_PUBLIC_CONNECTOR_API_URL: ${NEXT_PUBLIC_CONNECTOR_API_URL:-http://localhost:3000}
+        NEXT_PUBLIC_CONNECTOR_WS_URL: ${NEXT_PUBLIC_CONNECTOR_WS_URL:-http://localhost:3000}
+        NEXT_PUBLIC_RULES_API_URL: ${NEXT_PUBLIC_RULES_API_URL:-/rules-api}
+        RULES_INTERNAL_API_URL: ${RULES_INTERNAL_API_URL:-http://whatsaap-backend-api:8000}
+    image: whatsapp-dashboard:latest
+    container_name: whatsapp-dashboard
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3001}:3000"
+    networks:
+      - whatsapp-platform
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/login"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  whatsapp-platform:
+    external: true
+    name: whatsapp-platform

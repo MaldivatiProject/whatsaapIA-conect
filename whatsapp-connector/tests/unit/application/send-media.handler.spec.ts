@@ -16,6 +16,7 @@ class MockSocket implements SessionSocketPort {
   lastMedia?: SendMediaParams;
   async connect(): Promise<void> {}
   async disconnect(): Promise<void> {}
+  async delete(): Promise<void> {}
   async sendMessage(): Promise<string> { return 'm'; }
   async sendMedia(p: SendMediaParams): Promise<string> { this.lastMedia = p; return 'media-id'; }
   isActive(): boolean { return true; }

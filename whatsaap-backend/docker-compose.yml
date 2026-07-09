@@ -1,0 +1,132 @@
+x-backend: &backend
+  build:
+    context: .
+    dockerfile: Dockerfile
+  image: whatsaap-backend:0.1.0
+  restart: unless-stopped
+  env_file:
+    - path: .env
+      required: false
+  networks:
+    - whatsapp-platform
+
+services:
+  migrate:
+    image: redgate/flyway:12.10-alpine
+    command:
+      - -url=${FLYWAY_URL}
+      - -user=${FLYWAY_USER}
+      - -password=${FLYWAY_PASSWORD}
+      - -schemas=automation_schema
+      - -defaultSchema=automation_schema
+      - -table=flyway_schema_history
+      - -locations=filesystem:/flyway/sql
+      - -validateMigrationNaming=true
+      - -cleanDisabled=true
+      - migrate
+    volumes:
+      - ./db/migration:/flyway/sql:ro
+    networks:
+      - whatsapp-platform
+    restart: "no"
+
+  api:
+    <<: *backend
+    container_name: whatsaap-backend-api
+    command: ["whatsaap-api"]
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-m", "whatsaap_backend.bootstrap.healthcheck", "api"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  worker-rules:
+    <<: *backend
+    container_name: whatsaap-backend-worker-rules
+    command: ["whatsaap-worker-rules"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-m",
+          "whatsaap_backend.bootstrap.healthcheck",
+          "rabbit",
+          "automation.inbound-message.q",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  worker-delivery:
+    <<: *backend
+    container_name: whatsaap-backend-worker-delivery
+    command: ["whatsaap-worker-delivery"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-m",
+          "whatsaap_backend.bootstrap.healthcheck",
+          "rabbit",
+          "automation.delivery-result.q",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  outbox-relay:
+    <<: *backend
+    container_name: whatsaap-backend-outbox-relay
+    command: ["whatsaap-outbox-relay"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "whatsaap_backend.bootstrap.healthcheck", "relay"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  connector-bridge:
+    <<: *backend
+    container_name: whatsaap-backend-connector-bridge
+    command: ["whatsaap-connector-bridge"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-m",
+          "whatsaap_backend.bootstrap.healthcheck",
+          "rabbit",
+          "connector.message-send.q",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+networks:
+  whatsapp-platform:
+    external: true
+    name: whatsapp-platform

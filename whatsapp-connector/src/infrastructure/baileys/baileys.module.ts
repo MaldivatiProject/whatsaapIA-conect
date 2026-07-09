@@ -1,8 +1,11 @@
-import { Module } from '@nestjs/common';
+import { Inject, Module, type OnModuleDestroy } from '@nestjs/common';
 import { SessionManagerService } from './session-manager.service';
-import { BaileysSessionAdapter, REDIS_CLIENT } from './baileys-session.adapter';
+import { BaileysSessionAdapter, VALKEY_CLIENT } from './baileys-session.adapter';
 import { SESSION_SOCKET } from '../../application/ports/session-socket.port';
-import { EVENT_PUBLISHER } from '../../application/ports/event-publisher.port';
+import {
+  EVENT_PUBLISHER,
+  type EventPublisherPort,
+} from '../../application/ports/event-publisher.port';
 import { SESSION_REPOSITORY } from '../../domain/session/session.repository';
 import { CompositeEventPublisher } from '../events/composite.event-publisher';
 import { WebSocketEventPublisher } from '../events/websocket.event-publisher';
@@ -10,29 +13,35 @@ import { RestWebhookEventPublisher } from '../events/rest-webhook.event-publishe
 import { EventsGateway } from '../websocket/events.gateway';
 import { InMemorySessionRepository } from '../persistence/in-memory.session.repository';
 import { FilesystemSessionRepository } from '../persistence/filesystem.session.repository';
-import { RedisSessionRepository } from '../persistence/redis.session.repository';
+import { ValkeySessionRepository } from '../persistence/valkey.session.repository';
 import { PrismaSessionRepository } from '../persistence/prisma.session.repository';
 import type { SessionRepository } from '../../domain/session/session.repository';
 import { APP_CONFIG } from '../../application/shared/tokens';
-import { getConfig } from '../../config/app.config';
+import { getConfig, getValkeyUrl, isValkeyEnabled } from '../../config/app.config';
 import { Logger } from '@nestjs/common';
-import Redis from 'ioredis';
+import Valkey from 'ioredis';
 
 const config = getConfig();
 const bootstrapLogger = new Logger('BaileysModule');
 
 const sessionRepositoryProvider = {
   provide: SESSION_REPOSITORY,
-  // Reuses the shared REDIS_CLIENT instead of opening a second connection (was a leak).
-  useFactory: (redis: Redis | null): SessionRepository => {
+  // Reuses the shared Valkey client instead of opening a second connection.
+  useFactory: (valkey: Valkey | null): SessionRepository => {
     switch (config.SESSION_PROVIDER) {
+      case 'valkey':
       case 'redis':
-        if (!redis) {
+        if (!valkey) {
           throw new Error(
-            'SESSION_PROVIDER=redis requires ENABLE_REDIS=true and a valid REDIS_URL',
+            'SESSION_PROVIDER=valkey requires ENABLE_VALKEY=true and a valid VALKEY_URL',
           );
         }
-        return new RedisSessionRepository(redis);
+        if (config.SESSION_PROVIDER === 'redis') {
+          bootstrapLogger.warn(
+            'SESSION_PROVIDER=redis is deprecated; migrate to SESSION_PROVIDER=valkey',
+          );
+        }
+        return new ValkeySessionRepository(valkey);
       case 'postgres':
         if (!config.ENABLE_POSTGRES || !config.DATABASE_URL) {
           throw new Error(
@@ -49,14 +58,15 @@ const sessionRepositoryProvider = {
         return new InMemorySessionRepository();
     }
   },
-  inject: [REDIS_CLIENT],
+  inject: [VALKEY_CLIENT],
 };
 
-const redisClientProvider = {
-  provide: REDIS_CLIENT,
-  useFactory: (): Redis | null => {
-    if (config.ENABLE_REDIS && config.REDIS_URL) {
-      return new Redis(config.REDIS_URL);
+const valkeyClientProvider = {
+  provide: VALKEY_CLIENT,
+  useFactory: (): Valkey | null => {
+    const url = getValkeyUrl(config);
+    if (isValkeyEnabled(config) && url) {
+      return new Valkey(url);
     }
     return null;
   },
@@ -65,7 +75,8 @@ const redisClientProvider = {
 const eventPublisherProvider = {
   provide: EVENT_PUBLISHER,
   useFactory: (gateway: EventsGateway): CompositeEventPublisher => {
-    const publishers = [];
+    const publishers: EventPublisherPort[] = [];
+    if (!config.ENABLE_EVENTS) return new CompositeEventPublisher(publishers);
     if (config.ENABLE_WEBSOCKET) {
       publishers.push(new WebSocketEventPublisher(gateway));
     }
@@ -82,7 +93,7 @@ const eventPublisherProvider = {
     { provide: APP_CONFIG, useValue: config },
     SessionManagerService,
     sessionRepositoryProvider,
-    redisClientProvider,
+    valkeyClientProvider,
     eventPublisherProvider,
     EventsGateway,
     BaileysSessionAdapter,
@@ -97,4 +108,10 @@ const eventPublisherProvider = {
     SessionManagerService,
   ],
 })
-export class BaileysModule {}
+export class BaileysModule implements OnModuleDestroy {
+  constructor(@Inject(VALKEY_CLIENT) private readonly valkey: Valkey | null) {}
+
+  async onModuleDestroy(): Promise<void> {
+    if (this.valkey) await this.valkey.quit();
+  }
+}

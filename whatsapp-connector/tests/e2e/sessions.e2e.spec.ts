@@ -18,6 +18,7 @@ const KEY_B = 'supersecretkey-bbbbbbbb';
 class NoopSocketAdapter implements SessionSocketPort {
   async connect(): Promise<void> {}
   async disconnect(): Promise<void> {}
+  async delete(): Promise<void> {}
   async sendMessage(): Promise<string> { return 'msg-e2e'; }
   async sendMedia(): Promise<string> { return 'msg-e2e'; }
   isActive(): boolean { return false; }
@@ -124,6 +125,25 @@ describe('Sessions API (e2e)', () => {
       await request(app.getHttpServer()).get('/sessions').set('x-api-key', KEY_B).expect(200).expect([]);
       // tenantB cannot delete it (404, not 403)
       await request(app.getHttpServer()).delete('/sessions/owned-by-a').set('x-api-key', KEY_B).expect(404);
+      // Every id-taking endpoint must conceal cross-owner resources.
+      await request(app.getHttpServer()).get('/sessions/owned-by-a/qr').set('x-api-key', KEY_B).expect(404);
+      await request(app.getHttpServer()).post('/sessions/owned-by-a/disconnect').set('x-api-key', KEY_B).expect(404);
+      await request(app.getHttpServer())
+        .post('/messages/send')
+        .set('x-api-key', KEY_B)
+        .send({ sessionId: 'owned-by-a', to: '573001234567@s.whatsapp.net', text: 'blocked' })
+        .expect(404);
+      await request(app.getHttpServer())
+        .post('/messages/send-media')
+        .set('x-api-key', KEY_B)
+        .send({
+          sessionId: 'owned-by-a',
+          to: '573001234567@s.whatsapp.net',
+          mimeType: 'image/png',
+          fileName: 'pixel.png',
+          data: 'iVBORw0KGgo=',
+        })
+        .expect(404);
     });
   });
 

@@ -32,6 +32,11 @@ export class InMemorySessionRepository implements SessionRepository {
     this.store.delete(id);
   }
 
+  async deleteOwned(id: SessionId, ownerId: string): Promise<void> {
+    const session = this.store.get(id);
+    if (session?.isOwnedBy(ownerId)) this.store.delete(id);
+  }
+
   async count(): Promise<number> {
     return this.store.size;
   }

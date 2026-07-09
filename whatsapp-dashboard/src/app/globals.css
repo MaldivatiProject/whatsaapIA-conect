@@ -1,0 +1,153 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-geist-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  /* Marca (alocredit.co): naranja + navy + celeste + verde de estado. */
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-brand-teal: var(--brand-teal);
+  --color-brand-teal-foreground: var(--brand-teal-foreground);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+/*
+ * Paleta derivada de alocredit.co (https://alocredit.co/index.html), sin logo.
+ * Naranja (--alo-orange #FA8514) como color principal, fiel al sitio (ahí es
+ * el color dominante de botones/CTA). Navy (--alo-blue #102552) como color
+ * secundario fuerte y como texto sobre el naranja (blanco sobre naranja no
+ * pasa WCAG AA — navy oscuro sí, con margen). Celeste (#5B9FD9, de sus
+ * degradés) como acento frío de contraste. Teal (--alo-blue-soft #003B5C)
+ * disponible como tercer color de marca vía --brand-teal.
+ * Todos los pares texto/fondo fueron validados contra WCAG AA (>= 4.5:1).
+ */
+:root {
+  --background: oklch(1 0 0); /* #FFFFFF */
+  --foreground: oklch(0.256 0.033 263.743); /* #1B2333 */
+  --card: oklch(1 0 0); /* #FFFFFF */
+  --card-foreground: oklch(0.256 0.033 263.743);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.256 0.033 263.743);
+  --primary: oklch(0.733 0.176 55.281); /* alo-orange #FA8514 */
+  --primary-foreground: oklch(0.212 0.051 261.606); /* navy oscuro #0B1830 — 7.1:1 sobre el naranja */
+  --secondary: oklch(0.277 0.087 263.113); /* alo-blue #102552 */
+  --secondary-foreground: oklch(1 0 0);
+  --muted: oklch(0.95 0 0); /* #F2F2F2 — gris neutro, sin tinte cálido, separado de --background (blanco puro) */
+  --muted-foreground: oklch(0.446 0.026 256.802); /* #4B5563 */
+  --accent: oklch(0.682 0.111 246.092); /* #5B9FD9 */
+  --accent-foreground: oklch(0.277 0.087 263.113);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.907 0 89.876); /* #E0E0E0 */
+  --input: oklch(0.907 0 89.876);
+  --ring: oklch(0.733 0.176 55.281); /* naranja, igual que primary */
+  --success: oklch(0.542 0.129 152.676); /* #1E8449 — ajustado de #27AE60 del sitio para AA */
+  --success-foreground: oklch(1 0 0);
+  --brand-teal: oklch(0.337 0.079 241.477); /* alo-blue-soft #003B5C */
+  --brand-teal-foreground: oklch(1 0 0);
+  --chart-1: oklch(0.733 0.176 55.281);
+  --chart-2: oklch(0.277 0.087 263.113);
+  --chart-3: oklch(0.682 0.111 246.092);
+  --chart-4: oklch(0.337 0.079 241.477);
+  --chart-5: oklch(0.542 0.129 152.676);
+  --radius: 0.625rem;
+  --sidebar: oklch(1 0 0);
+  --sidebar-foreground: oklch(0.256 0.033 263.743);
+  --sidebar-primary: oklch(0.733 0.176 55.281);
+  --sidebar-primary-foreground: oklch(0.212 0.051 261.606);
+  --sidebar-accent: oklch(0.95 0 0);
+  --sidebar-accent-foreground: oklch(0.277 0.087 263.113);
+  --sidebar-border: oklch(0.907 0 89.876);
+  --sidebar-ring: oklch(0.733 0.176 55.281);
+}
+
+.dark {
+  --background: oklch(0.212 0.051 261.606); /* #0B1830 */
+  --foreground: oklch(0.956 0.015 257.197); /* #EAF1FB */
+  --card: oklch(0.244 0.061 262.713); /* #101F3D */
+  --card-foreground: oklch(0.956 0.015 257.197);
+  --popover: oklch(0.244 0.061 262.713);
+  --popover-foreground: oklch(0.956 0.015 257.197);
+  --primary: oklch(0.733 0.176 55.281); /* alo-orange #FA8514 — mismo naranja, se ve bien sobre fondo oscuro */
+  --primary-foreground: oklch(0.212 0.051 261.606); /* #0B1830 — mismo par que en light, 7.1:1 */
+  --secondary: oklch(0.308 0.055 246.68); /* #16324A */
+  --secondary-foreground: oklch(0.956 0.015 257.197);
+  --muted: oklch(0.308 0.055 246.68);
+  --muted-foreground: oklch(0.729 0.05 257.273); /* #94A9C7 */
+  --accent: oklch(0.308 0.055 246.68);
+  --accent-foreground: oklch(0.956 0.015 257.197);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.733 0.176 55.281);
+  --success: oklch(0.722 0.163 154.333); /* #35C275 */
+  --success-foreground: oklch(0.212 0.051 261.606);
+  --brand-teal: oklch(0.394 0.075 243.202); /* #1C4A6B */
+  --brand-teal-foreground: oklch(0.956 0.015 257.197);
+  --chart-1: oklch(0.733 0.176 55.281);
+  --chart-2: oklch(0.308 0.055 246.68);
+  --chart-3: oklch(0.394 0.075 243.202);
+  --chart-4: oklch(0.722 0.163 154.333);
+  --chart-5: oklch(0.729 0.05 257.273);
+  --sidebar: oklch(0.244 0.061 262.713);
+  --sidebar-foreground: oklch(0.956 0.015 257.197);
+  --sidebar-primary: oklch(0.733 0.176 55.281);
+  --sidebar-primary-foreground: oklch(0.212 0.051 261.606);
+  --sidebar-accent: oklch(0.308 0.055 246.68);
+  --sidebar-accent-foreground: oklch(0.956 0.015 257.197);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.733 0.176 55.281);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}

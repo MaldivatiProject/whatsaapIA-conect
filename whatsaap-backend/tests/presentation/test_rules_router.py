@@ -1,0 +1,155 @@
+from __future__ import annotations
+
+from uuid import UUID, uuid4
+
+from fastapi.testclient import TestClient
+
+from whatsaap_backend.bootstrap.api import create_app
+from whatsaap_backend.config import Settings
+from whatsaap_backend.domain.models import BusinessRule
+
+API_KEY = "acme-secret-at-least-16-chars"
+
+
+class _FakeRuleRepository:
+    def __init__(self) -> None:
+        self._rules: dict[UUID, BusinessRule] = {}
+
+    async def list_active(
+        self, tenant_id: str, session_id: str | None = None
+    ) -> list[BusinessRule]:
+        del session_id
+        return [r for r in self._rules.values() if r.tenant_id == tenant_id and r.enabled]
+
+    async def list_all(self, tenant_id: str) -> list[BusinessRule]:
+        return [r for r in self._rules.values() if r.tenant_id == tenant_id]
+
+    async def get(self, tenant_id: str, rule_id: UUID) -> BusinessRule | None:
+        rule = self._rules.get(rule_id)
+        return rule if rule and rule.tenant_id == tenant_id else None
+
+    async def add(self, rule: BusinessRule) -> BusinessRule:
+        self._rules[rule.uuid] = rule
+        return rule
+
+    async def update(self, rule: BusinessRule) -> BusinessRule:
+        if rule.uuid not in self._rules:
+            raise LookupError("Rule not found")
+        rule.version += 1  # mirrors SqlAlchemyRuleRepository.update()'s server-side increment
+        self._rules[rule.uuid] = rule
+        return rule
+
+    async def soft_delete(self, tenant_id: str, rule_id: UUID) -> bool:
+        rule = self._rules.get(rule_id)
+        if not rule or rule.tenant_id != tenant_id:
+            return False
+        del self._rules[rule_id]
+        return True
+
+
+class _FakeUow:
+    def __init__(self, repo: _FakeRuleRepository) -> None:
+        self.rules = repo
+
+    async def __aenter__(self) -> _FakeUow:
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+    async def commit(self) -> None:
+        return None
+
+
+def _client() -> TestClient:
+    settings = Settings(API_KEYS=f"acme:{API_KEY}", AUTH_ENABLED=True)
+    app = create_app(settings)
+    repo = _FakeRuleRepository()
+    app.state.uow_factory = lambda: _FakeUow(repo)
+    return TestClient(app)
+
+
+def _headers() -> dict[str, str]:
+    return {"x-api-key": API_KEY}
+
+
+_RULE_PAYLOAD = {
+    "name": "auto-reply-numero",
+    "conditions": [
+        {"field": "sender", "operator": "equals", "value": "573243744739@s.whatsapp.net"}
+    ],
+    "actions": [{"type": "send_text", "params": {"text": "Procesando tu solicitud..."}}],
+}
+
+
+def test_requires_api_key() -> None:
+    client = _client()
+    response = client.get("/api/v1/rules")
+    assert response.status_code == 401
+
+
+def test_rejects_wrong_api_key() -> None:
+    client = _client()
+    response = client.get("/api/v1/rules", headers={"x-api-key": "not-the-right-key"})
+    assert response.status_code == 401
+
+
+def test_create_list_get_update_delete_round_trip() -> None:
+    client = _client()
+
+    created = client.post("/api/v1/rules", json=_RULE_PAYLOAD, headers=_headers())
+    assert created.status_code == 201
+    rule_id = created.json()["id"]
+    assert created.json()["tenant_id"] == "acme"
+    assert created.json()["enabled"] is True
+
+    listed = client.get("/api/v1/rules", headers=_headers())
+    assert listed.status_code == 200
+    assert len(listed.json()) == 1
+
+    fetched = client.get(f"/api/v1/rules/{rule_id}", headers=_headers())
+    assert fetched.status_code == 200
+    assert fetched.json()["name"] == "auto-reply-numero"
+
+    updated = client.patch(f"/api/v1/rules/{rule_id}", json={"enabled": False}, headers=_headers())
+    assert updated.status_code == 200
+    assert updated.json()["enabled"] is False
+    assert updated.json()["version"] == 2
+
+    deleted = client.delete(f"/api/v1/rules/{rule_id}", headers=_headers())
+    assert deleted.status_code == 204
+
+    after_delete = client.get(f"/api/v1/rules/{rule_id}", headers=_headers())
+    assert after_delete.status_code == 404
+
+
+def test_rejects_rule_with_no_conditions() -> None:
+    client = _client()
+    payload = {**_RULE_PAYLOAD, "conditions": []}
+
+    response = client.post("/api/v1/rules", json=payload, headers=_headers())
+
+    assert response.status_code == 422
+
+
+def test_get_nonexistent_rule_returns_404() -> None:
+    client = _client()
+    response = client.get(f"/api/v1/rules/{uuid4()}", headers=_headers())
+    assert response.status_code == 404
+
+
+def test_another_tenant_cannot_see_or_modify_the_rule() -> None:
+    settings = Settings(
+        API_KEYS=f"acme:{API_KEY},other:other-secret-16-chars-ok", AUTH_ENABLED=True
+    )
+    app = create_app(settings)
+    repo = _FakeRuleRepository()
+    app.state.uow_factory = lambda: _FakeUow(repo)
+    client = TestClient(app)
+
+    created = client.post("/api/v1/rules", json=_RULE_PAYLOAD, headers=_headers())
+    rule_id = created.json()["id"]
+
+    other_headers = {"x-api-key": "other-secret-16-chars-ok"}
+    assert client.get(f"/api/v1/rules/{rule_id}", headers=other_headers).status_code == 404
+    assert client.get("/api/v1/rules", headers=other_headers).json() == []

@@ -38,24 +38,22 @@ export class RestWebhookEventPublisher implements EventPublisherPort {
       headers['X-Webhook-Signature'] = `sha256=${signature}`;
     }
 
-    try {
-      const response = await fetch(this.config.WEBHOOK_URL!, {
-        method: 'POST',
-        headers,
-        body: payload,
-        signal: AbortSignal.timeout(5000),
-      });
-
-      if (!response.ok) {
-        this.logger.warn(
-          `Webhook delivery failed: ${event.eventName} → ${response.status}`,
-        );
+    const url = this.config.WEBHOOK_URL;
+    if (!url) return;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const response = await fetch(url, {
+          method: 'POST', headers, body: payload, signal: AbortSignal.timeout(5000),
+        });
+        if (response.ok) return;
+        if (response.status < 500 && response.status !== 429) return;
+      } catch (error) {
+        if (attempt === 3) {
+          this.logger.error(`Webhook delivery error: ${event.eventName}`, error instanceof Error ? error.message : String(error));
+        }
       }
-    } catch (error) {
-      this.logger.error(
-        `Webhook delivery error: ${event.eventName}`,
-        error instanceof Error ? error.message : String(error),
-      );
+      await new Promise<void>((resolve) => setTimeout(resolve, 250 * 2 ** (attempt - 1)));
     }
+    this.logger.warn(`Webhook delivery exhausted retries: ${event.eventName}`);
   }
 }

@@ -77,6 +77,10 @@ export class FilesystemSessionRepository implements SessionRepository {
     }
   }
 
+  async deleteOwned(id: SessionId, ownerId: string): Promise<void> {
+    if (await this.findByIdAndOwner(id, ownerId)) await this.delete(id);
+  }
+
   async count(): Promise<number> {
     try {
       const files = await readdir(this.metaDir);

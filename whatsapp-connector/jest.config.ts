@@ -25,6 +25,7 @@ const config: Config = {
     {
       displayName: 'unit',
       testMatch: ['<rootDir>/tests/unit/**/*.spec.ts'],
+      collectCoverageFrom: ['<rootDir>/src/domain/**/*.ts', '<rootDir>/src/application/**/*.ts'],
       transform: { '^.+\\.(t|j)s$': 'ts-jest' },
       setupFiles: ['<rootDir>/tests/setup.ts'],
       moduleNameMapper: {
@@ -34,6 +35,7 @@ const config: Config = {
         '^@api/(.*)$': '<rootDir>/src/api/$1',
         '^@shared/(.*)$': '<rootDir>/src/shared/$1',
         '^@config/(.*)$': '<rootDir>/src/config/$1',
+        '^@whiskeysockets/baileys$': '<rootDir>/tests/mocks/baileys.ts',
       },
     },
     {
@@ -48,6 +50,7 @@ const config: Config = {
         '^@api/(.*)$': '<rootDir>/src/api/$1',
         '^@shared/(.*)$': '<rootDir>/src/shared/$1',
         '^@config/(.*)$': '<rootDir>/src/config/$1',
+        '^@whiskeysockets/baileys$': '<rootDir>/tests/mocks/baileys.ts',
       },
     },
   ],

@@ -57,19 +57,15 @@ export class SessionManagerService implements OnModuleDestroy {
     managed.reconnectTimer = setTimeout(callback, delayMs);
   }
 
-  async remove(sessionId: SessionId): Promise<void> {
+  async close(sessionId: SessionId): Promise<void> {
     const managed = this.sockets.get(sessionId);
     if (!managed) return;
 
     if (managed.reconnectTimer) clearTimeout(managed.reconnectTimer);
 
     try {
-      // Baileys types require an event arg, cast to base EventEmitter to remove all
       (managed.socket.ev as unknown as { removeAllListeners(): void }).removeAllListeners();
-      await managed.socket.logout().catch(() => {
-        // logout can fail if already disconnected — safe to ignore
-      });
-      managed.socket.end(new Error('session_deleted'));
+      managed.socket.end(new Error('session_closed'));
     } catch {
       // ignore cleanup errors
     }
@@ -77,8 +73,31 @@ export class SessionManagerService implements OnModuleDestroy {
     this.sockets.delete(sessionId);
   }
 
+  async logout(sessionId: SessionId): Promise<void> {
+    const managed = this.sockets.get(sessionId);
+    if (!managed) return;
+
+    if (managed.reconnectTimer) clearTimeout(managed.reconnectTimer);
+    try {
+      await managed.socket.logout();
+    } catch {
+      // The remote logout is best-effort. Permanent deletion must continue so
+      // local credentials cannot survive and later be reused by another session.
+    } finally {
+      try {
+        (managed.socket.ev as unknown as { removeAllListeners(): void }).removeAllListeners();
+        managed.socket.end(new Error('session_deleted'));
+      } catch {
+        // Best-effort transport cleanup; authentication state is deleted separately.
+      }
+      this.sockets.delete(sessionId);
+    }
+  }
+
   async onModuleDestroy(): Promise<void> {
     const ids = [...this.sockets.keys()] as SessionId[];
-    await Promise.allSettled(ids.map((id) => this.remove(id)));
+    // A process shutdown must not revoke linked WhatsApp devices. Persisted auth
+    // state is intentionally kept so sessions can reconnect on the next startup.
+    await Promise.allSettled(ids.map((id) => this.close(id)));
   }
 }

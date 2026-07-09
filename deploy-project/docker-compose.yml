@@ -1,0 +1,304 @@
+name: ${COMPOSE_PROJECT_NAME:-whatsaapia-platform}
+
+x-backend: &backend
+  build:
+    context: ../whatsaap-backend
+    dockerfile: Dockerfile
+  image: whatsaap-backend:0.1.0
+  restart: unless-stopped
+  environment: &backend-env
+    APP_ENV: ${APP_ENV:-development}
+    APP_HOST: 0.0.0.0
+    APP_PORT: 8000
+    LOG_LEVEL: ${BACKEND_LOG_LEVEL:-INFO}
+    CORS_ORIGINS: ${BACKEND_CORS_ORIGINS:-http://localhost:3001,http://127.0.0.1:3001}
+    DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-wac}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be configured}@postgres:5432/${POSTGRES_DB:-whatsapp_connector}
+    DATABASE_SCHEMA: ${DATABASE_SCHEMA:-automation_schema}
+    DB_POOL_SIZE: ${DB_POOL_SIZE:-10}
+    VALKEY_URL: redis://valkey:6379/1
+    RABBITMQ_URL: amqp://${RABBITMQ_DEFAULT_USER:-automation}:${RABBITMQ_DEFAULT_PASS:?RABBITMQ_DEFAULT_PASS must be configured}@rabbitmq:5672/${RABBITMQ_DEFAULT_VHOST:-whatsapp}
+    RABBITMQ_PREFETCH: ${RABBITMQ_PREFETCH:-10}
+    RABBITMQ_TOPOLOGY_ENABLED: ${RABBITMQ_TOPOLOGY_ENABLED:-true}
+    CONNECTOR_BASE_URL: http://whatsapp-connector:3000
+    CONNECTOR_API_KEY: ${API_KEY_SECRET:?API_KEY_SECRET must be configured}
+    CONNECTOR_TIMEOUT_SECONDS: ${CONNECTOR_TIMEOUT_SECONDS:-10}
+    AUTH_ENABLED: ${AUTH_ENABLED:-true}
+    API_KEYS: ${TENANT_ID:-acme}:${API_KEY_SECRET:?API_KEY_SECRET must be configured}
+    WEBHOOK_SECRET: ${WEBHOOK_SECRET:?WEBHOOK_SECRET must be configured}
+    WEBHOOK_DEFAULT_TENANT_ID: ${TENANT_ID:-acme}
+    WEBHOOK_PROCESSING_MODE: ${WEBHOOK_PROCESSING_MODE:-outbox}
+    OUTBOX_BATCH_SIZE: ${OUTBOX_BATCH_SIZE:-50}
+    OUTBOX_POLL_INTERVAL_SECONDS: ${OUTBOX_POLL_INTERVAL_SECONDS:-1}
+    OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS:-10}
+    OUTBOX_STALE_LOCK_SECONDS: ${OUTBOX_STALE_LOCK_SECONDS:-300}
+  networks:
+    - whatsapp-platform
+  depends_on:
+    postgres:
+      condition: service_healthy
+    valkey:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: whatsapp-platform-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-whatsapp_connector}
+      POSTGRES_USER: ${POSTGRES_USER:-wac}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be configured}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - whatsapp-platform
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-wac} -d ${POSTGRES_DB:-whatsapp_connector}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  valkey:
+    image: valkey/valkey:9.1.0-alpine
+    container_name: whatsapp-platform-valkey
+    restart: unless-stopped
+    command: valkey-server --appendonly yes
+    volumes:
+      - valkey_data:/data
+    networks:
+      - whatsapp-platform
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:4.3.2-management-alpine
+    container_name: whatsapp-platform-rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-automation}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:?RABBITMQ_DEFAULT_PASS must be configured}
+      RABBITMQ_DEFAULT_VHOST: ${RABBITMQ_DEFAULT_VHOST:-whatsapp}
+    ports:
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - whatsapp-platform
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  migrate:
+    image: redgate/flyway:12.10-alpine
+    command:
+      - -url=jdbc:postgresql://postgres:5432/${POSTGRES_DB:-whatsapp_connector}
+      - -user=${POSTGRES_USER:-wac}
+      - -password=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be configured}
+      - -schemas=${DATABASE_SCHEMA:-automation_schema}
+      - -defaultSchema=${DATABASE_SCHEMA:-automation_schema}
+      - -table=flyway_schema_history
+      - -locations=filesystem:/flyway/sql
+      - -validateMigrationNaming=true
+      - -cleanDisabled=true
+      - migrate
+    volumes:
+      - ../whatsaap-backend/db/migration:/flyway/sql:ro
+    networks:
+      - whatsapp-platform
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  whatsaap-backend-api:
+    <<: *backend
+    container_name: whatsaap-backend-api
+    command: ["whatsaap-api"]
+    ports:
+      - "${BACKEND_HOST_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-m", "whatsaap_backend.bootstrap.healthcheck", "api"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  whatsaap-backend-worker-rules:
+    <<: *backend
+    container_name: whatsaap-backend-worker-rules
+    command: ["whatsaap-worker-rules"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-m",
+          "whatsaap_backend.bootstrap.healthcheck",
+          "rabbit",
+          "automation.inbound-message.q",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  whatsaap-backend-worker-delivery:
+    <<: *backend
+    container_name: whatsaap-backend-worker-delivery
+    command: ["whatsaap-worker-delivery"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-m",
+          "whatsaap_backend.bootstrap.healthcheck",
+          "rabbit",
+          "automation.delivery-result.q",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  whatsaap-backend-outbox-relay:
+    <<: *backend
+    container_name: whatsaap-backend-outbox-relay
+    command: ["whatsaap-outbox-relay"]
+    healthcheck:
+      test: ["CMD", "python", "-m", "whatsaap_backend.bootstrap.healthcheck", "relay"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  whatsaap-backend-connector-bridge:
+    <<: *backend
+    container_name: whatsaap-backend-connector-bridge
+    command: ["whatsaap-connector-bridge"]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-m",
+          "whatsaap_backend.bootstrap.healthcheck",
+          "rabbit",
+          "connector.message-send.q",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  whatsapp-connector:
+    build:
+      context: ../whatsapp-connector
+      dockerfile: Dockerfile
+      target: production
+    image: whatsapp-connector:latest
+    container_name: whatsapp-connector
+    restart: unless-stopped
+    ports:
+      - "${CONNECTOR_HOST_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3000
+      LOG_LEVEL: ${CONNECTOR_LOG_LEVEL:-info}
+      SESSION_PATH: /app/sessions
+      MAX_SESSIONS: ${MAX_SESSIONS:-10}
+      SESSION_PROVIDER: ${SESSION_PROVIDER:-valkey}
+      RECONNECT_INTERVAL_MS: ${RECONNECT_INTERVAL_MS:-5000}
+      MAX_RECONNECT_ATTEMPTS: ${MAX_RECONNECT_ATTEMPTS:-5}
+      HEARTBEAT_INTERVAL_MS: ${HEARTBEAT_INTERVAL_MS:-30000}
+      ENABLE_WEBSOCKET: ${ENABLE_WEBSOCKET:-true}
+      ENABLE_EVENTS: ${ENABLE_EVENTS:-true}
+      ENABLE_VALKEY: ${ENABLE_VALKEY:-true}
+      VALKEY_URL: redis://valkey:6379/0
+      AUTH_STATE_ENCRYPTION_KEY: ${AUTH_STATE_ENCRYPTION_KEY:?AUTH_STATE_ENCRYPTION_KEY must be configured}
+      ENABLE_POSTGRES: ${CONNECTOR_ENABLE_POSTGRES:-false}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-wac}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be configured}@postgres:5432/${POSTGRES_DB:-whatsapp_connector}
+      WEBHOOK_ENABLED: ${WEBHOOK_ENABLED:-true}
+      WEBHOOK_URL: http://whatsaap-backend-api:8000/webhooks/whatsapp-connector
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:?WEBHOOK_SECRET must be configured}
+      CORS_ENABLED: ${CORS_ENABLED:-true}
+      CORS_ORIGINS: ${CONNECTOR_CORS_ORIGINS:-http://localhost:3001,http://127.0.0.1:3001}
+      MAX_MEDIA_SIZE_MB: ${MAX_MEDIA_SIZE_MB:-16}
+      RATE_LIMIT_MAX_PER_MINUTE: ${RATE_LIMIT_MAX_PER_MINUTE:-20}
+      RATE_LIMIT_MIN_DELAY_MS: ${RATE_LIMIT_MIN_DELAY_MS:-500}
+      AUTH_ENABLED: ${AUTH_ENABLED:-true}
+      API_KEYS: ${TENANT_ID:-acme}:${API_KEY_SECRET:?API_KEY_SECRET must be configured}
+      HTTP_RATE_LIMIT_TTL_MS: ${HTTP_RATE_LIMIT_TTL_MS:-60000}
+      HTTP_RATE_LIMIT_MAX: ${HTTP_RATE_LIMIT_MAX:-120}
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      HEALTH_MAX_HEAP_MB: ${HEALTH_MAX_HEAP_MB:-1024}
+      SWAGGER_ENABLED: ${SWAGGER_ENABLED:-false}
+      TLS_ENABLED: ${TLS_ENABLED:-false}
+      TLS_CERT_PATH: ${TLS_CERT_PATH:-}
+      TLS_KEY_PATH: ${TLS_KEY_PATH:-}
+    volumes:
+      - sessions_data:/app/sessions
+    networks:
+      - whatsapp-platform
+    depends_on:
+      valkey:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      whatsaap-backend-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  whatsapp-dashboard:
+    build:
+      context: ../whatsapp-dashboard
+      dockerfile: Dockerfile
+      target: production
+      args:
+        NEXT_PUBLIC_CONNECTOR_API_URL: ${PUBLIC_CONNECTOR_API_URL:-http://localhost:3000}
+        NEXT_PUBLIC_CONNECTOR_WS_URL: ${PUBLIC_CONNECTOR_WS_URL:-http://localhost:3000}
+        NEXT_PUBLIC_RULES_API_URL: ${PUBLIC_RULES_API_URL:-/rules-api}
+        RULES_INTERNAL_API_URL: http://whatsaap-backend-api:8000
+    image: whatsapp-dashboard:latest
+    container_name: whatsapp-dashboard
+    restart: unless-stopped
+    ports:
+      - "${DASHBOARD_HOST_PORT:-3001}:3000"
+    networks:
+      - whatsapp-platform
+    depends_on:
+      whatsapp-connector:
+        condition: service_healthy
+      whatsaap-backend-api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/login"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+volumes:
+  postgres_data:
+  valkey_data:
+  rabbitmq_data:
+  sessions_data:
+
+networks:
+  whatsapp-platform:
+    external: true
+    name: ${DOCKER_NETWORK_NAME:-whatsapp-platform}

@@ -35,8 +35,8 @@ Microservicio especializado en gestión de conexiones con WhatsApp. Actúa como 
 
 - Gestionar múltiples sesiones de WhatsApp simultáneas (multi-tenant)
 - Generar y exponer códigos QR para autenticación
-- Persistir credenciales de sesión (filesystem, Redis o PostgreSQL)
-- Reconectarse automáticamente con backoff configurable
+- Persistir credenciales de sesión (filesystem, Valkey o PostgreSQL)
+- Reconectarse automáticamente con intervalo e intentos configurables
 - Recibir mensajes entrantes y publicar eventos
 - Enviar mensajes de texto, imágenes, documentos y audio
 - Detectar mensajes de grupos y chats individuales
@@ -63,7 +63,7 @@ Microservicio especializado en gestión de conexiones con WhatsApp. Actúa como 
 | Validación de config | Zod | 3.x |
 | Logging | Pino + pino-pretty | 9.x |
 | ORM (opcional) | Prisma | 6.x |
-| Cache/Auth (opcional) | ioredis | 5.x |
+| Cache/Auth (opcional) | Valkey + cliente `ioredis` | Valkey 9.1 / ioredis 5.x |
 | Tests | Jest + ts-jest | 29.x |
 | Tests E2E | Supertest | 7.x |
 | Contenedores | Docker / Podman | — |
@@ -101,10 +101,10 @@ El proyecto aplica **Clean Architecture** con separación estricta de capas. Nin
 │  Session Aggregate      │   │  BaileysSessionAdapter        │
 │  SessionStatus (DU)     │   │  SessionManager (Map sockets) │
 │  SessionConfig VO       │   │  FilesystemAuthState          │
-│  SessionId (Branded)    │   │  RedisAuthState               │
+│  SessionId (Branded)    │   │  ValkeyAuthState              │
 │  10 Domain Events       │   │  InMemorySessionRepository    │
 │  8 Domain Errors        │   │  FilesystemSessionRepository  │
-│  SessionRepository Port │   │  RedisSessionRepository       │
+│  SessionRepository Port │   │  ValkeySessionRepository      │
 │  SendMessageParams VO   │   │  PrismaSessionRepository      │
 │  SendMediaParams VO     │   │  WebSocketEventPublisher      │
 └─────────────────────────┘   │  RestWebhookEventPublisher    │
@@ -160,7 +160,7 @@ WhatsApp ──► Baileys ──► BaileysSessionAdapter
                          ├─ !message → ignore
                          ├─ protocolMessage → ignore
                          ├─ age > 60s → ignore
-                         └─ duplicate (Redis/Map) → ignore
+                         └─ duplicate (Valkey/Map) → ignore
                                  │
                          EventPublisher.publishMany()
                                  │
@@ -180,7 +180,8 @@ WhatsApp ──► Baileys ──► BaileysSessionAdapter
 whatsapp-connector/
 ├── src/
 │   ├── config/
-│   │   └── app.config.ts              # Validación Zod de variables de entorno
+│   │   ├── app.config.ts              # Validación Zod de variables de entorno
+│   │   └── openapi.config.ts           # Swagger/OpenAPI
 │   │
 │   ├── domain/                        # Zero dependencias de frameworks
 │   │   ├── shared/
@@ -222,16 +223,17 @@ whatsapp-connector/
 │   │   │   ├── baileys.module.ts
 │   │   │   └── auth-state/
 │   │   │       ├── filesystem.auth-state.ts
-│   │   │       └── redis.auth-state.ts
+│   │   │       └── valkey.auth-state.ts
 │   │   ├── persistence/
 │   │   │   ├── in-memory.session.repository.ts
 │   │   │   ├── filesystem.session.repository.ts
-│   │   │   ├── redis.session.repository.ts
+│   │   │   ├── valkey.session.repository.ts
 │   │   │   └── prisma.session.repository.ts
 │   │   ├── events/
 │   │   │   ├── websocket.event-publisher.ts
 │   │   │   ├── rest-webhook.event-publisher.ts
 │   │   │   └── composite.event-publisher.ts
+│   │   ├── observability/              # Métricas Prometheus + interceptor
 │   │   └── websocket/
 │   │       └── events.gateway.ts
 │   │
@@ -242,10 +244,13 @@ whatsapp-connector/
 │   │   ├── messages/
 │   │   │   ├── messages.controller.ts
 │   │   │   └── dto/
-│   │   └── health/
-│   │       └── health.controller.ts
+│   │   ├── health/
+│   │   │   └── health.controller.ts
+│   │   └── metrics/
+│   │       └── metrics.controller.ts
 │   │
 │   ├── shared/                        # Concerns transversales
+│   │   ├── auth/                       # API key, owner y rutas públicas
 │   │   ├── logging/pino-logger.service.ts
 │   │   ├── context/request-context.ts  # AsyncLocalStorage + hashJid()
 │   │   ├── filters/                    # 3 Exception Filters RFC 7807
@@ -256,15 +261,18 @@ whatsapp-connector/
 │
 ├── tests/
 │   ├── unit/
-│   │   ├── domain/session.aggregate.spec.ts
-│   │   └── application/
-│   │       ├── create-session.handler.spec.ts
-│   │       └── send-message.handler.spec.ts
+│   │   ├── application/
+│   │   ├── config/
+│   │   ├── domain/
+│   │   └── infrastructure/
 │   └── e2e/
 │       └── sessions.e2e.spec.ts
 │
 ├── prisma/
-│   └── schema.prisma
+│   ├── schema.prisma
+│   └── migrations/
+├── api/postman/                        # Colección y ambientes
+├── docs/                               # ADR y controles de seguridad
 ├── manage.py                          # CLI manager interactivo
 ├── Dockerfile
 ├── docker-compose.yml
@@ -290,7 +298,7 @@ cp .env.example .env
 | `LOG_LEVEL` | `info` | Nivel de log (`trace`, `debug`, `info`, `warn`, `error`) |
 | `SESSION_PATH` | `./sessions` | Directorio de sesiones (auth state filesystem) |
 | `MAX_SESSIONS` | `10` | Máximo de sesiones simultáneas |
-| `SESSION_PROVIDER` | `filesystem` | Proveedor de persistencia: `filesystem`, `redis`, `postgres` |
+| `SESSION_PROVIDER` | `filesystem` | Proveedor de persistencia: `filesystem`, `valkey`, `postgres` |
 | `RECONNECT_INTERVAL_MS` | `5000` | Intervalo entre reintentos de reconexión (ms) |
 | `MAX_RECONNECT_ATTEMPTS` | `5` | Intentos máximos de reconexión antes de abandonar |
 | `HEARTBEAT_INTERVAL_MS` | `30000` | Intervalo de heartbeat (ms) |
@@ -299,17 +307,30 @@ cp .env.example .env
 | `CORS_ENABLED` | `true` | Habilitar CORS |
 | `CORS_ORIGINS` | `*` | Orígenes permitidos separados por coma |
 | `ENABLE_WEBSOCKET` | `true` | Habilitar servidor WebSocket |
-| `ENABLE_REST` | `true` | Habilitar API REST |
 | `ENABLE_EVENTS` | `true` | Publicar eventos a clientes |
-| `ENABLE_REDIS` | `false` | Habilitar Redis (auth state + dedup) |
-| `REDIS_URL` | — | URL de Redis: `redis://host:6379` |
+| `ENABLE_VALKEY` | `false` | Habilitar Valkey para auth state y deduplicación |
+| `VALKEY_URL` | — | URL RESP de Valkey: `redis://host:6379` |
 | `ENABLE_POSTGRES` | `false` | Habilitar PostgreSQL como repositorio |
 | `DATABASE_URL` | — | URL de PostgreSQL (Prisma format) |
 | `WEBHOOK_ENABLED` | `false` | Enviar eventos a webhook externo |
 | `WEBHOOK_URL` | — | URL destino del webhook |
 | `WEBHOOK_SECRET` | — | Secret para firma HMAC-SHA256 del webhook |
-| `RATE_LIMIT_MAX_PER_MINUTE` | `20` | Máximo de mensajes por minuto por sesión |
-| `RATE_LIMIT_MIN_DELAY_MS` | `500` | Delay mínimo entre mensajes (ms) |
+| `RATE_LIMIT_MAX_PER_MINUTE` | `20` | Límite saliente registrado por sesión |
+| `RATE_LIMIT_MIN_DELAY_MS` | `500` | Separación saliente registrada por sesión (ms) |
+| `AUTH_ENABLED` | `true` | Exigir `x-api-key` salvo en rutas públicas |
+| `API_KEYS` | vacío | Mapeo `ownerId:secret`; cada secret requiere al menos 16 caracteres |
+| `HTTP_RATE_LIMIT_TTL_MS` | `60000` | Ventana del throttler HTTP (ms) |
+| `HTTP_RATE_LIMIT_MAX` | `120` | Solicitudes máximas por ventana |
+| `METRICS_ENABLED` | `true` | Exponer `/metrics` e instrumentar latencia HTTP |
+| `HEALTH_MAX_HEAP_MB` | `1024` | Umbral de heap para readiness (MB) |
+| `SWAGGER_ENABLED` | no producción | Exponer Swagger en `/docs` |
+| `AUTH_STATE_ENCRYPTION_KEY` | — | Clave base64 de 32 bytes; obligatoria en producción |
+| `TLS_ENABLED` | `false` | Terminar TLS directamente en NestJS |
+| `TLS_CERT_PATH` | — | Ruta del certificado cuando TLS está activo |
+| `TLS_KEY_PATH` | — | Ruta de la clave privada cuando TLS está activo |
+
+`ENABLE_REDIS`, `REDIS_URL` y `SESSION_PROVIDER=redis` se aceptan temporalmente
+como aliases de migración. Están deprecados y no deben usarse en despliegues nuevos.
 
 ---
 
@@ -318,8 +339,8 @@ cp .env.example .env
 ### Modo desarrollo (local)
 
 ```bash
-# 1. Instalar dependencias
-npm install
+# 1. Instalar dependencias reproducibles
+npm ci
 
 # 2. Configurar entorno
 cp .env.example .env
@@ -349,13 +370,21 @@ Menú con todas las opciones: desarrollo, Docker, Podman, pruebas de API, utilid
 
 ## API REST
 
+Salvo `GET /health`, todos los endpoints requieren una API key. El propietario
+asociado a la clave delimita las sesiones visibles y evita acceso cruzado entre tenants.
+
+```bash
+export API_KEY="change-me-to-a-long-random-secret"
+```
+
 ### Sesiones
 
 #### `GET /sessions`
-Lista todas las sesiones registradas.
+Lista únicamente las sesiones pertenecientes al propietario autenticado.
 
 ```bash
-curl http://localhost:3000/sessions
+curl http://localhost:3000/sessions \
+  -H "x-api-key: $API_KEY"
 ```
 
 ```json
@@ -363,8 +392,6 @@ curl http://localhost:3000/sessions
   {
     "id": "mi-sesion",
     "status": "open",
-    "statusKind": "open",
-    "isConnected": true,
     "createdAt": "2026-06-14T12:00:00.000Z",
     "updatedAt": "2026-06-14T12:01:30.000Z"
   }
@@ -378,6 +405,7 @@ Crea una nueva sesión e inicia el proceso de conexión con WhatsApp.
 
 ```bash
 curl -X POST http://localhost:3000/sessions \
+  -H "x-api-key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{"sessionId": "mi-sesion"}'
 ```
@@ -389,8 +417,6 @@ curl -X POST http://localhost:3000/sessions \
 | Campo | Tipo | Requerido | Descripción |
 |---|---|---|---|
 | `sessionId` | string | ✔ | Alfanumérico, máx 64 chars (`a-z A-Z 0-9 _ -`) |
-| `maxReconnectAttempts` | number | — | Override de intentos de reconexión |
-| `reconnectIntervalMs` | number | — | Override del intervalo de reconexión (ms) |
 
 ---
 
@@ -398,12 +424,12 @@ curl -X POST http://localhost:3000/sessions \
 Retorna el código QR actual de la sesión (disponible ~5 segundos después de crearla).
 
 ```bash
-curl http://localhost:3000/sessions/mi-sesion/qr
+curl http://localhost:3000/sessions/mi-sesion/qr \
+  -H "x-api-key: $API_KEY"
 ```
 
 ```json
 {
-  "sessionId": "mi-sesion",
   "qrCode": "2@xxx...",
   "expiresAt": "2026-06-14T12:02:30.000Z"
 }
@@ -417,7 +443,8 @@ curl http://localhost:3000/sessions/mi-sesion/qr
 Desconecta la sesión sin eliminarla. Puede reconectarse posteriormente.
 
 ```bash
-curl -X POST http://localhost:3000/sessions/mi-sesion/disconnect
+curl -X POST http://localhost:3000/sessions/mi-sesion/disconnect \
+  -H "x-api-key: $API_KEY"
 ```
 
 `204 No Content`
@@ -428,7 +455,8 @@ curl -X POST http://localhost:3000/sessions/mi-sesion/disconnect
 Elimina la sesión y libera todos los recursos asociados.
 
 ```bash
-curl -X DELETE http://localhost:3000/sessions/mi-sesion
+curl -X DELETE http://localhost:3000/sessions/mi-sesion \
+  -H "x-api-key: $API_KEY"
 ```
 
 `204 No Content`
@@ -442,6 +470,7 @@ Envía un mensaje de texto.
 
 ```bash
 curl -X POST http://localhost:3000/messages/send \
+  -H "x-api-key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "sessionId": "mi-sesion",
@@ -473,6 +502,7 @@ Envía un archivo multimedia (imagen, video, audio, documento).
 
 ```bash
 curl -X POST http://localhost:3000/messages/send-media \
+  -H "x-api-key: $API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
     "sessionId": "mi-sesion",
@@ -551,7 +581,10 @@ Conectar al servidor con cualquier cliente socket.io:
 ```javascript
 import { io } from "socket.io-client";
 
-const socket = io("http://localhost:3000");
+const socket = io("http://localhost:3000", {
+  transports: ["websocket"],
+  auth: { token: process.env.WHATSAPP_CONNECTOR_API_KEY },
+});
 
 socket.on("SESSION_CREATED",       (event) => console.log(event));
 socket.on("SESSION_CONNECTED",     (event) => console.log(event));
@@ -576,11 +609,16 @@ socket.on("MESSAGE_SENT",          (event) => console.log(event));
   "from": "5491122334455@s.whatsapp.net",
   "isGroup": false,
   "type": "conversation",
-  "timestamp": 1749902400
+  "timestamp": 1749902400,
+  "text": "Hola",
+  "pushName": "Contacto"
 }
 ```
 
 > **Nota de privacidad:** Los JIDs nunca se incluyen en logs. Internamente se hashean con SHA-256 para trazabilidad.
+
+El gateway valida la misma API key que REST y suscribe al cliente a una sala privada
+`owner:<id>`. No existe broadcast global entre propietarios.
 
 ---
 
@@ -591,16 +629,22 @@ El proveedor de persistencia se selecciona con `SESSION_PROVIDER`:
 | Proveedor | `SESSION_PROVIDER` | Requiere | Descripción |
 |---|---|---|---|
 | Filesystem | `filesystem` | — | Archivos JSON en `SESSION_PATH/.meta/` |
-| Redis | `redis` | `ENABLE_REDIS=true` + `REDIS_URL` | Keys con prefijo `wac:session:` |
+| Valkey | `valkey` | `ENABLE_VALKEY=true` + `VALKEY_URL` | Keys con prefijo `wac:session:` |
 | PostgreSQL | `postgres` | `ENABLE_POSTGRES=true` + `DATABASE_URL` | Tabla `whatsapp_session` (Prisma) |
 
 El **auth state de Baileys** (credenciales Signal Protocol) también se puede almacenar en:
 - **Filesystem** (default): directorio `SESSION_PATH/{sessionId}/`
-- **Redis** (cuando `ENABLE_REDIS=true`): keys `wac:auth:{sessionId}:*`
+- **Valkey** (cuando `ENABLE_VALKEY=true`): keys `wac:auth:{sessionId}:*`
 
 ---
 
 ## Observabilidad
+
+- `GET /health` es público y se usa para el healthcheck del contenedor.
+- `GET /metrics` expone métricas Prometheus cuando `METRICS_ENABLED=true` y requiere
+  `x-api-key`.
+- `GET /health/events-monitor` requiere autenticación HTTP y el socket vuelve a
+  autenticar la API key durante el handshake.
 
 ### Logs estructurados (Pino)
 
@@ -609,7 +653,7 @@ El **auth state de Baileys** (credenciales Signal Protocol) también se puede al
   "level": "info",
   "time": "2026-06-14T12:00:00.000Z",
   "service": "whatsapp-connector",
-  "version": "1.0.0",
+  "version": "0.0.0",
   "env": "production",
   "correlationId": "a1b2c3d4-...",
   "context": "CreateSessionHandler",
@@ -617,7 +661,9 @@ El **auth state de Baileys** (credenciales Signal Protocol) también se puede al
 }
 ```
 
-Todos los requests HTTP y mensajes de WhatsApp tienen un `correlationId` (UUID v4) propagado via `AsyncLocalStorage`.
+Los requests HTTP tienen un `correlationId` (UUID v4) propagado mediante
+`AsyncLocalStorage`. Los callbacks asíncronos de Baileys que no nacen de una petición
+HTTP se registran fuera de ese contexto.
 
 ### Seguridad en logs
 
@@ -641,7 +687,11 @@ npm run test:e2e
 npm run test:cov
 
 # Type checking
-npx tsc --noEmit
+npm run typecheck
+
+# Límites arquitectónicos y lint
+npm run arch:check
+npm run lint
 ```
 
 ### Estrategia de tests
@@ -661,14 +711,14 @@ Los tests de aplicación usan **InMemory adapters** en lugar de `jest.fn()` para
 
 ```bash
 cp .env.example .env
-docker-compose up whatsapp-connector --build
+docker compose up -d whatsapp-connector --build
 ```
 
-### Con Redis (auth state y dedup persistente)
+### Con Valkey (auth state y dedup persistente)
 
 ```bash
-ENABLE_REDIS=true REDIS_URL=redis://redis:6379 \
-docker-compose --profile redis up --build
+SESSION_PROVIDER=valkey ENABLE_VALKEY=true VALKEY_URL=redis://valkey:6379 \
+docker compose --profile valkey up -d --build
 ```
 
 ### Con PostgreSQL (repositorio de sesiones)
@@ -676,8 +726,20 @@ docker-compose --profile redis up --build
 ```bash
 ENABLE_POSTGRES=true DATABASE_URL=postgresql://wac:wac_secret@postgres:5432/whatsapp_connector \
 SESSION_PROVIDER=postgres \
-docker-compose --profile postgres up --build
+docker compose --profile postgres up -d --build
 ```
+
+### Con RabbitMQ compartido para `whatsaap-backend`
+
+```bash
+RABBITMQ_DEFAULT_USER=automation RABBITMQ_DEFAULT_PASS=change-me-rabbitmq \
+RABBITMQ_DEFAULT_VHOST=whatsapp \
+docker compose --profile rabbitmq up -d rabbitmq
+```
+
+El compose crea la red `whatsapp-platform`; `whatsaap-backend` se conecta a esa
+misma red y reutiliza PostgreSQL, Valkey y RabbitMQ cuando esos perfiles están
+activos.
 
 ### Build manual
 
@@ -727,7 +789,7 @@ Se usa separación de paquetes `commands/` y `queries/` sin Event Bus ni buses t
 Los sockets de Baileys (`WASocket`) son conexiones WebSocket stateful no serializables. Viven en un `Map<sessionId, WASocket>` en memoria. Los **metadatos** de sesión (estado, config, timestamps) se persisten en el proveedor configurado.
 
 ### EventPublisher intercambiable
-Implementado como un Port (`EventPublisherPort`) con múltiples adaptadores (WebSocket, REST Webhook). El `CompositeEventPublisher` fanea a todos los publishers activos según la configuración. Agregar un publisher nuevo (Kafka, Redis Pub/Sub, NATS) no requiere modificar la capa de aplicación.
+Implementado como un Port (`EventPublisherPort`) con múltiples adaptadores (WebSocket, REST Webhook). El `CompositeEventPublisher` fanea a todos los publishers activos según la configuración. Agregar un publisher nuevo (Kafka, Valkey Pub/Sub, NATS) no requiere modificar la capa de aplicación.
 
 ### Filtros obligatorios en mensajes Baileys
 Para evitar procesamiento duplicado y mensajes del sistema:
@@ -736,7 +798,7 @@ fromMe === true        → ignorar
 !message              → ignorar (notificación vacía)
 protocolMessage        → ignorar (mensajes internos de WhatsApp)
 age > 60 segundos      → ignorar (mensajes históricos al reconectar)
-key.id duplicado       → ignorar (dedup Redis TTL 5 min)
+key.id duplicado       → ignorar (dedup Valkey TTL 5 min)
 ```
 
 ### Configuration over Code

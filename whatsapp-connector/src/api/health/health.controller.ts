@@ -1,4 +1,4 @@
-import { Controller, Get, Res } from '@nestjs/common';
+import { Controller, Get, Inject, Res } from '@nestjs/common';
 import type { Response } from 'express';
 import {
   HealthCheck,
@@ -10,6 +10,9 @@ import { ApiExcludeEndpoint } from '@nestjs/swagger';
 import { SessionManagerService } from '../../infrastructure/baileys/session-manager.service';
 import { Public } from '../../shared/auth/public.decorator';
 import { SkipThrottle } from '@nestjs/throttler';
+import { SESSION_REPOSITORY, type SessionRepository } from '../../domain/session/session.repository';
+import { APP_CONFIG } from '../../application/shared/tokens';
+import type { AppConfig } from '../../config/app.config';
 
 @Controller('health')
 export class HealthController {
@@ -17,6 +20,8 @@ export class HealthController {
     private readonly health: HealthCheckService,
     private readonly memory: MemoryHealthIndicator,
     private readonly sessionManager: SessionManagerService,
+    @Inject(SESSION_REPOSITORY) private readonly sessions: SessionRepository,
+    @Inject(APP_CONFIG) private readonly config: AppConfig,
   ) {}
 
   @Get('events-monitor')
@@ -127,10 +132,16 @@ export class HealthController {
     // Don't log qrCode payload (can be large)
     const payload = { ...data };
     if (payload.qrCode) payload.qrCode = '[QR omitido]';
-    entry.innerHTML =
-      '<span class="ts">' + ts + '</span>' +
-      '<span class="badge ' + cat + '">' + name + '</span>' +
-      '<span class="payload">' + JSON.stringify(payload, null, 2) + '</span>';
+    const tsNode = document.createElement('span');
+    tsNode.className = 'ts';
+    tsNode.textContent = ts;
+    const badge = document.createElement('span');
+    badge.className = 'badge ' + cat;
+    badge.textContent = name;
+    const payloadNode = document.createElement('span');
+    payloadNode.className = 'payload';
+    payloadNode.textContent = JSON.stringify(payload, null, 2);
+    entry.append(tsNode, badge, payloadNode);
     entry.style.display = show ? '' : 'none';
     logEl.insertBefore(entry, logEl.firstChild);
     count++;
@@ -145,14 +156,15 @@ export class HealthController {
   });
 
   // Reuse the same API key used to open this page so the socket authenticates as the same owner.
-  const apiKey = new URLSearchParams(location.search).get('api_key') || '';
+  const apiKey = window.sessionStorage.getItem('whatsappConnectorApiKey') || window.prompt('API key') || '';
+  if (apiKey) window.sessionStorage.setItem('whatsappConnectorApiKey', apiKey);
   const socket = io({ transports: ['websocket'], auth: { token: apiKey } });
   socket.on('connect', () => {
     dotEl.classList.add('connected');
     statusEl.textContent = 'Conectado · 0 eventos';
   });
   socket.on('unauthorized', (e) => {
-    statusEl.textContent = 'No autorizado — añade ?api_key=TU_CLAVE a la URL';
+    statusEl.textContent = 'No autorizado — recarga e introduce una API key válida';
   });
   socket.on('disconnect', () => {
     dotEl.classList.remove('connected');
@@ -174,9 +186,10 @@ export class HealthController {
   @HealthCheck()
   async check(): Promise<HealthCheckResult> {
     return this.health.check([
-      () => this.memory.checkHeap('memory_heap', 512 * 1024 * 1024),
+      () => this.memory.checkHeap('memory_heap', this.config.HEALTH_MAX_HEAP_MB * 1024 * 1024),
       async () => {
         const activeSessions = this.sessionManager.getActiveSessions();
+        await this.sessions.count();
         return {
           whatsapp_sessions: {
             status: 'up' as const,

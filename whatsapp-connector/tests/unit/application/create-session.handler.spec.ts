@@ -11,6 +11,7 @@ class MockSessionSocket implements SessionSocketPort {
   readonly connected: string[] = [];
   async connect(sessionId: string): Promise<void> { this.connected.push(sessionId); }
   async disconnect(): Promise<void> {}
+  async delete(): Promise<void> {}
   async sendMessage(): Promise<string> { return 'msg-id'; }
   async sendMedia(): Promise<string> { return 'msg-id'; }
   isActive(): boolean { return false; }

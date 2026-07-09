@@ -5,7 +5,7 @@
 ## Context
 The service is a long-lived, modular WhatsApp gateway with HTTP + WebSocket
 transports, DI needs, lifecycle hooks (graceful shutdown of Baileys sockets) and
-multiple swappable adapters (filesystem/Redis/Postgres persistence, WS/webhook
+multiple swappable adapters (filesystem/Valkey/Postgres persistence, WS/webhook
 event publishers).
 
 ## Decision

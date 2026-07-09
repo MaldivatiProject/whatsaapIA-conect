@@ -13,6 +13,7 @@ export interface SessionRepository {
   findAllByOwner(ownerId: string): Promise<Session[]>;
   save(session: Session): Promise<void>;
   delete(id: SessionId): Promise<void>;
+  deleteOwned(id: SessionId, ownerId: string): Promise<void>;
   count(): Promise<number>;
 }
 

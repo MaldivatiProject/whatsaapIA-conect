@@ -43,10 +43,7 @@ export class ApiKeyAuthGuard implements CanActivate {
     }
 
     const header = request.headers[API_KEY_HEADER];
-    // Browser-facing QR/monitor pages cannot set headers easily, so an `api_key`
-    // query param is accepted as a fallback. Header is preferred (not logged).
-    const queryKey = typeof request.query?.['api_key'] === 'string' ? request.query['api_key'] : undefined;
-    const presented = (Array.isArray(header) ? header[0] : header) ?? queryKey;
+    const presented = Array.isArray(header) ? header[0] : header;
     const ownerId = this.apiKeys.authenticate(presented);
     if (!ownerId) {
       throw new UnauthorizedException('Missing or invalid API key');

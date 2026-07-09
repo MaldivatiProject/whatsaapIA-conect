@@ -16,8 +16,10 @@ import type { EventPublisherPort } from '../../../src/application/ports/event-pu
 class MockSocket implements SessionSocketPort {
   active = true;
   readonly disconnected: string[] = [];
+  readonly deleted: string[] = [];
   async connect(): Promise<void> {}
   async disconnect(id: string): Promise<void> { this.disconnected.push(id); }
+  async delete(id: string): Promise<void> { this.deleted.push(id); }
   async sendMessage(): Promise<string> { return 'm'; }
   async sendMedia(): Promise<string> { return 'm'; }
   isActive(): boolean { return this.active; }
@@ -47,7 +49,8 @@ describe('DeleteSessionHandler', () => {
     await handler.execute(new DeleteSessionCommand('s1', 'tenantA'));
 
     expect(await repo.findById('s1' as never)).toBeNull();
-    expect(socket.disconnected).toContain('s1');
+    expect(socket.deleted).toContain('s1');
+    expect(socket.disconnected).not.toContain('s1');
   });
 
   it('prevents BOLA: another owner cannot delete (404)', async () => {

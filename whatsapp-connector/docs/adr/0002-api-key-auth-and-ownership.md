@@ -8,7 +8,7 @@ read, control or send from any `sessionId` — a textbook BOLA/IDOR (OWASP API1:
 
 ## Decision
 1. **Authentication:** a global `ApiKeyAuthGuard` requires a valid key in the
-   `x-api-key` header (or `?api_key=` query for browser QR/monitor pages). Keys are
+   `x-api-key` header. Keys are never accepted in URLs or query strings. Keys are
    configured as `API_KEYS="ownerId:secret,..."`, compared in constant time. Each
    key maps to an **ownerId** (tenant). `/health` is `@Public`; `/metrics` stays
    behind the guard.
@@ -19,6 +19,8 @@ read, control or send from any `sessionId` — a textbook BOLA/IDOR (OWASP API1:
 3. **WebSocket:** the gateway authenticates the socket handshake and joins an
    `owner:<ownerId>` room; events are emitted only to the owning tenant's room — no
    global broadcast.
+4. **Credential storage:** production requires Valkey auth state encrypted with
+   AES-256-GCM using `AUTH_STATE_ENCRYPTION_KEY`; local filesystem mode is development-only.
 
 ## Consequences
 - `AUTH_ENABLED=true` requires at least one key or the service refuses to boot.

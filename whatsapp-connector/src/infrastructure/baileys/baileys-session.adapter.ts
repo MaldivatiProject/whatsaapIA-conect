@@ -6,6 +6,7 @@ import makeWASocket, {
   fetchLatestBaileysVersion,
   isJidGroup,
   jidNormalizedUser,
+  type WAMessage,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
 import type { SessionSocketPort } from '../../application/ports/session-socket.port';
@@ -14,13 +15,15 @@ import { EVENT_PUBLISHER } from '../../application/ports/event-publisher.port';
 import type { SessionRepository } from '../../domain/session/session.repository';
 import { SESSION_REPOSITORY } from '../../domain/session/session.repository';
 import type { SessionId } from '../../domain/session/session-id.vo';
-import { createSessionId } from '../../domain/session/session-id.vo';
 import type { SendMessageParams } from '../../domain/message/send-message.params';
 import type { SendMediaParams } from '../../domain/message/send-media.params';
 import { SessionManagerService } from './session-manager.service';
-import { createFilesystemAuthState } from './auth-state/filesystem.auth-state';
-import { createRedisAuthState } from './auth-state/redis.auth-state';
-import type { AppConfig } from '../../config/app.config';
+import {
+  createFilesystemAuthState,
+  deleteFilesystemAuthState,
+} from './auth-state/filesystem.auth-state';
+import { createValkeyAuthState, deleteValkeyAuthState } from './auth-state/valkey.auth-state';
+import { isValkeyEnabled, type AppConfig } from '../../config/app.config';
 import { APP_CONFIG } from '../../application/shared/tokens';
 import {
   MessageReceivedEvent,
@@ -29,9 +32,9 @@ import {
   MediaReceivedEvent,
 } from '../../domain/session/session.events';
 import { hashJid } from '../../shared/context/request-context';
-import type { Redis } from 'ioredis';
+import type { Redis as ValkeyClient } from 'ioredis';
 
-export const REDIS_CLIENT = Symbol('RedisClient');
+export const VALKEY_CLIENT = Symbol('ValkeyClient');
 
 // Message dedup TTL: 5 minutes — same as Baileys redelivery window
 const DEDUP_TTL_SECONDS = 300;
@@ -52,7 +55,7 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
     @Inject(SESSION_REPOSITORY) private readonly sessions: SessionRepository,
     @Inject(EVENT_PUBLISHER) private readonly eventPublisher: EventPublisherPort,
     @Inject(APP_CONFIG) private readonly config: AppConfig,
-    @Inject(REDIS_CLIENT) private readonly redis: Redis | null,
+    @Inject(VALKEY_CLIENT) private readonly valkey: ValkeyClient | null,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -79,9 +82,10 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
       this.logger.warn('fetchLatestBaileysVersion failed — using fallback version');
     }
 
-    const authState = this.config.ENABLE_REDIS && this.redis
-      ? await createRedisAuthState(this.redis, sessionId)
-      : await createFilesystemAuthState(this.config.SESSION_PATH, sessionId);
+    const authState =
+      isValkeyEnabled(this.config) && this.valkey
+        ? await createValkeyAuthState(this.valkey, sessionId)
+        : await createFilesystemAuthState(this.config.SESSION_PATH, sessionId);
 
     // Mark session as connecting so the UI reflects progress
     const sessionForStatus = await this.sessions.findById(sessionId);
@@ -126,14 +130,15 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
     });
 
     // Build LID → phone JID index so messages from @lid senders resolve to real numbers.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const indexContacts = (contacts: any[], source: string): void => {
+    const indexContacts = (contacts: unknown[], source: string): void => {
       const map = this.lidToPhone.get(sessionId);
       if (!map) return;
       let added = 0;
-      for (const c of contacts) {
-        if (c.lid && c.id) {
-          map.set(jidNormalizedUser(String(c.lid)), jidNormalizedUser(String(c.id)));
+      for (const contact of contacts) {
+        if (typeof contact !== 'object' || contact === null) continue;
+        const c = contact as Record<string, unknown>;
+        if (typeof c['lid'] === 'string' && typeof c['id'] === 'string') {
+          map.set(jidNormalizedUser(c['lid']), jidNormalizedUser(c['id']));
           added++;
         }
       }
@@ -143,28 +148,36 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
       );
     };
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    socket.ev.on('messaging-history.set' as any, ({ contacts }: any) => {
+    const looseEvents = socket.ev as unknown as {
+      on(event: string, listener: (data: unknown) => void): void;
+    };
+    looseEvents.on('messaging-history.set', (data) => {
+      if (typeof data !== 'object' || data === null) return;
+      const contacts = (data as Record<string, unknown>)['contacts'];
       if (Array.isArray(contacts)) indexContacts(contacts, 'history');
     });
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    socket.ev.on('contacts.upsert' as any, (contacts: any[]) => indexContacts(contacts, 'upsert'));
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    socket.ev.on('contacts.update' as any, (updates: any[]) => indexContacts(updates, 'update'));
+    looseEvents.on('contacts.upsert', (contacts) => {
+      if (Array.isArray(contacts)) indexContacts(contacts, 'upsert');
+    });
+    looseEvents.on('contacts.update', (contacts) => {
+      if (Array.isArray(contacts)) indexContacts(contacts, 'update');
+    });
 
     // chats.phoneNumberShare maps chat JIDs (possibly @lid) → phone numbers directly
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    socket.ev.on('chats.phoneNumberShare' as any, (data: any) => {
+    looseEvents.on('chats.phoneNumberShare', (data) => {
       const map = this.lidToPhone.get(sessionId);
       if (!map) return;
-      const entries = data instanceof Map ? data : Object.entries(data as Record<string, string>);
+      if (typeof data !== 'object' || data === null) return;
+      const entries: Iterable<[unknown, unknown]> =
+        data instanceof Map ? data.entries() : Object.entries(data as Record<string, unknown>);
       for (const [jid, phone] of entries) {
         const normalized = jidNormalizedUser(String(jid));
         if (normalized.endsWith('@lid')) {
           map.set(normalized, String(phone));
           // PII-safe: never log raw phone numbers / JIDs — hash them.
-          this.logger.log(`[LID] session=${sessionId} phoneNumberShare resolved ${hashJid(normalized)} → ${hashJid(String(phone))}`);
+          this.logger.log(
+            `[LID] session=${sessionId} phoneNumberShare resolved ${hashJid(normalized)} → ${hashJid(String(phone))}`,
+          );
         }
       }
     });
@@ -172,7 +185,9 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
 
   private async handleConnectionUpdate(
     sessionId: SessionId,
-    update: Parameters<Parameters<ReturnType<typeof makeWASocket>['ev']['on']>[1]>[0] extends infer U
+    update: Parameters<
+      Parameters<ReturnType<typeof makeWASocket>['ev']['on']>[1]
+    >[0] extends infer U
       ? U extends { connection?: unknown }
         ? U
         : never
@@ -221,7 +236,9 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
       const codeLabel = statusCode ? `${statusCode} (${reasonName})` : 'no-error';
       const reason = shouldReconnect ? `connection_closed:${codeLabel}` : 'logged_out';
 
-      this.logger.warn(`Session ${sessionId} disconnected — code: ${codeLabel} reconnect: ${String(shouldReconnect)}`);
+      this.logger.warn(
+        `Session ${sessionId} disconnected — code: ${codeLabel} reconnect: ${String(shouldReconnect)}`,
+      );
 
       session.markDisconnected(reason);
       await this.sessions.save(session);
@@ -231,7 +248,9 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
       if (shouldReconnect) {
         const attempt = this.manager.incrementReconnectAttempt(sessionId);
         if (attempt <= session.config.maxReconnectAttempts) {
-          this.logger.log(`Session ${sessionId} scheduling reconnect attempt ${attempt}/${session.config.maxReconnectAttempts}`);
+          this.logger.log(
+            `Session ${sessionId} scheduling reconnect attempt ${attempt}/${session.config.maxReconnectAttempts}`,
+          );
           session.markReconnecting(attempt);
           await this.sessions.save(session);
           this.manager.scheduleReconnect(
@@ -262,17 +281,12 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
     return resolved ?? jid;
   }
 
-  private async handleIncomingMessage(
-    sessionId: SessionId,
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    msg: any,
-  ): Promise<void> {
+  private async handleIncomingMessage(sessionId: SessionId, msg: WAMessage): Promise<void> {
     // Log every raw arrival at debug level so we can see what's being filtered
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const rawType = msg.message ? Object.keys(msg.message)[0] : 'no-message';
     this.logger.debug(
       `[RAW] session=${sessionId} fromMe=${String(msg.key?.fromMe)} type=${rawType} ` +
-      `age=${Math.round(Date.now() - Number(msg.messageTimestamp) * 1000)}ms`,
+        `age=${Math.round(Date.now() - Number(msg.messageTimestamp) * 1000)}ms`,
     );
 
     // Mandatory Baileys filters — order matters
@@ -284,7 +298,9 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
     if (ageMs > 60_000) return; // ignore messages older than 60s
 
     const messageId: string = msg.key?.id ?? '';
-    if (await this.isDuplicate(messageId)) return;
+    // Messages without an id cannot be deduplicated safely. An empty global key
+    // would suppress every subsequent id-less message.
+    if (messageId && (await this.isDuplicate(sessionId, messageId))) return;
 
     const rawFrom: string = msg.key?.remoteJid ?? '';
     // @lid JIDs are WhatsApp's internal multi-device IDs — resolve to phone JID when possible
@@ -294,7 +310,6 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
     const timestamp = Number(msg.messageTimestamp);
 
     // Extract text content — covers plain text, quoted replies, and button responses
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     const text: string =
       msg.message.conversation ??
       msg.message.extendedTextMessage?.text ??
@@ -314,33 +329,83 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
 
     const events = [];
 
-    events.push(new MessageReceivedEvent(sessionId, messageId, from, isGroup, messageType, timestamp, text, pushName));
+    events.push(
+      new MessageReceivedEvent(
+        sessionId,
+        messageId,
+        from,
+        isGroup,
+        messageType,
+        timestamp,
+        text,
+        pushName,
+      ),
+    );
 
     if (isGroup) {
       const sender: string = this.resolveLid(sessionId, msg.key?.participant ?? '');
-      events.push(new GroupMessageReceivedEvent(sessionId, messageId, from, sender, messageType, timestamp, text, pushName));
+      events.push(
+        new GroupMessageReceivedEvent(
+          sessionId,
+          messageId,
+          from,
+          sender,
+          messageType,
+          timestamp,
+          text,
+          pushName,
+        ),
+      );
     } else {
-      events.push(new PrivateMessageReceivedEvent(sessionId, messageId, from, messageType, timestamp, text, pushName));
+      events.push(
+        new PrivateMessageReceivedEvent(
+          sessionId,
+          messageId,
+          from,
+          messageType,
+          timestamp,
+          text,
+          pushName,
+        ),
+      );
     }
 
-    const mediaTypes = ['imageMessage', 'videoMessage', 'audioMessage', 'documentMessage', 'stickerMessage'];
+    const mediaTypes = [
+      'imageMessage',
+      'videoMessage',
+      'audioMessage',
+      'documentMessage',
+      'stickerMessage',
+    ];
     if (mediaTypes.includes(messageType)) {
-      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
-      const mimeType: string = msg.message[messageType]?.mimetype ?? 'application/octet-stream';
-      events.push(new MediaReceivedEvent(sessionId, messageId, from, messageType, mimeType, timestamp));
+      const messageRecord = msg.message as Record<string, { mimetype?: string } | undefined>;
+      const mimeType = messageRecord[messageType]?.mimetype ?? 'application/octet-stream';
+      events.push(
+        new MediaReceivedEvent(sessionId, messageId, from, messageType, mimeType, timestamp),
+      );
     }
 
     await this.eventPublisher.publishMany(events as never[]);
   }
 
   async disconnect(sessionId: SessionId): Promise<void> {
-    await this.manager.remove(sessionId);
+    await this.manager.close(sessionId);
     this.lidToPhone.delete(sessionId);
     const session = await this.sessions.findById(sessionId);
     if (session) {
       session.markDisconnected('manual_disconnect');
       await this.sessions.save(session);
     }
+  }
+
+  async delete(sessionId: SessionId): Promise<void> {
+    await this.manager.logout(sessionId);
+    this.lidToPhone.delete(sessionId);
+    if (isValkeyEnabled(this.config) && this.valkey) {
+      await deleteValkeyAuthState(this.valkey, sessionId);
+      return;
+    }
+    await deleteFilesystemAuthState(this.config.SESSION_PATH, sessionId);
   }
 
   async sendMessage(params: SendMessageParams): Promise<string> {
@@ -377,17 +442,18 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
     return this.manager.getActiveSessions();
   }
 
-  private async isDuplicate(messageId: string): Promise<boolean> {
-    if (this.redis) {
-      const key = `wac:dedup:${messageId}`;
-      const result = await this.redis.set(key, '1', 'EX', DEDUP_TTL_SECONDS, 'NX');
+  private async isDuplicate(sessionId: SessionId, messageId: string): Promise<boolean> {
+    const scopedId = `${sessionId}:${messageId}`;
+    if (this.valkey) {
+      const key = `wac:dedup:${scopedId}`;
+      const result = await this.valkey.set(key, '1', 'EX', DEDUP_TTL_SECONDS, 'NX');
       return result === null;
     }
 
     // In-memory fallback — clean old entries periodically
     const now = Date.now();
-    if (this.deduplicationCache.has(messageId)) return true;
-    this.deduplicationCache.set(messageId, now);
+    if (this.deduplicationCache.has(scopedId)) return true;
+    this.deduplicationCache.set(scopedId, now);
 
     // Prune entries older than TTL every 100 new messages
     if (this.deduplicationCache.size % 100 === 0) {

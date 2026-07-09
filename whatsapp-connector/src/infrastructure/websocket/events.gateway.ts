@@ -27,9 +27,6 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   private readonly logger = new Logger(EventsGateway.name);
   private readonly auth: ApiKeyResolver = createApiKeyResolver(config);
-  // sessionId → ownerId cache so routing does not hit storage on every event.
-  private readonly ownerCache = new Map<string, string>();
-
   constructor(
     @Inject(SESSION_REPOSITORY) private readonly sessions: SessionRepository,
   ) {}
@@ -81,17 +78,12 @@ export class EventsGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private extractToken(client: Socket): string | undefined {
     const authToken = (client.handshake.auth as { token?: unknown })?.token;
     if (typeof authToken === 'string') return authToken;
-    const q = client.handshake.query;
-    const fromQuery = q['api_key'] ?? q['token'];
-    return typeof fromQuery === 'string' ? fromQuery : undefined;
+    return undefined;
   }
 
   private async resolveOwner(sessionId: string): Promise<string | undefined> {
-    const cached = this.ownerCache.get(sessionId);
-    if (cached) return cached;
     const session = await this.sessions.findById(sessionId as SessionId);
     if (!session) return undefined;
-    this.ownerCache.set(sessionId, session.ownerId);
     return session.ownerId;
   }
 

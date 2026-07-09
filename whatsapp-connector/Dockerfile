@@ -22,11 +22,12 @@ RUN addgroup --system appgroup && adduser --system --ingroup appgroup appuser
 COPY package*.json ./
 RUN npm ci --omit=dev --ignore-scripts
 
-COPY --from=builder /app/dist ./dist
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY prisma ./prisma
+COPY --chown=appuser:appgroup --from=builder /app/dist ./dist
+COPY --chown=appuser:appgroup --from=builder /app/node_modules/.prisma ./node_modules/.prisma
+COPY --chown=appuser:appgroup prisma ./prisma
+COPY --chown=appuser:appgroup api ./api
 
-RUN mkdir -p /app/sessions && chown -R appuser:appgroup /app
+RUN mkdir -p /app/sessions && chown appuser:appgroup /app/sessions
 USER appuser
 
 EXPOSE 3000

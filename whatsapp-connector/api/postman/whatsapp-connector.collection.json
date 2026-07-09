@@ -67,14 +67,6 @@
           }
         },
         {
-          "name": "Reconnect session",
-          "request": {
-            "method": "POST",
-            "url": { "raw": "{{baseUrl}}/sessions/{{sessionId}}/reconnect", "host": ["{{baseUrl}}"], "path": ["sessions", "{{sessionId}}", "reconnect"] },
-            "description": "Forces a new connection for a disconnected session. Returns 202."
-          }
-        },
-        {
           "name": "Disconnect session",
           "request": {
             "method": "POST",

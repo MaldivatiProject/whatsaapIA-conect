@@ -1,4 +1,4 @@
-import { DomainEvent } from '../shared/domain-event';
+import type { DomainEvent } from '../shared/domain-event';
 import { type SessionId, createSessionId } from './session-id.vo';
 import { type SessionStatus, SessionStatus as SS, hasQr, isConnected } from './session-status.vo';
 import { type SessionConfig, createSessionConfig } from './session-config.vo';

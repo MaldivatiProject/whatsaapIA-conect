@@ -26,12 +26,15 @@ checklist in [`iso27001-checklist.md`](./iso27001-checklist.md).
 ## Rate limiting
 - `@nestjs/throttler` global guard (`HTTP_RATE_LIMIT_MAX` per `HTTP_RATE_LIMIT_TTL_MS`).
   `/health` is exempt.
-- Per-session Baileys send rate limit retained.
+- Outbound limits are captured in each session configuration. Distributed enforcement
+  remains a production hardening item; the HTTP throttler is the active control today.
 
 ## Secrets
 - No secrets in code or repo; `.env` is git-ignored. `API_KEYS`, `WEBHOOK_SECRET`,
-  `DATABASE_URL`, `REDIS_URL` are environment-injected.
+  `DATABASE_URL`, `VALKEY_URL` are environment-injected.
 - Webhook payloads signed with HMAC-SHA256 (`X-Webhook-Signature`).
+- Temporary disconnect and graceful shutdown preserve auth state. Permanent deletion
+  removes the filesystem directory or all session-scoped Valkey credential keys.
 
 ## Logging / PII
 - Structured `pino` logs. Phone numbers / JIDs are **hashed** (`hashJid`, SHA-256/12)
@@ -48,3 +51,4 @@ checklist in [`iso27001-checklist.md`](./iso27001-checklist.md).
 - `?api_key=` query fallback for browser QR pages can appear in proxy/access logs;
   prefer the header for machine clients.
 - WebSocket owner-routing uses an in-memory `sessionId → ownerId` cache with no TTL.
+- Outbound per-session rate limiting is not distributed across replicas.

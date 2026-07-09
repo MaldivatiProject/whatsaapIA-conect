@@ -9,6 +9,7 @@ import type { EventPublisherPort } from '../../../src/application/ports/event-pu
 class MockSessionSocket implements SessionSocketPort {
   async connect(): Promise<void> {}
   async disconnect(): Promise<void> {}
+  async delete(): Promise<void> {}
   async sendMessage(): Promise<string> { return 'generated-msg-id'; }
   async sendMedia(): Promise<string> { return 'msg-id'; }
   isActive(): boolean { return true; }

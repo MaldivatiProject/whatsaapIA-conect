@@ -10,15 +10,19 @@ datasource db {
 }
 
 model WhatsappSession {
-  pkid_session BigInt   @id @default(autoincrement())
-  session_id   String   @unique @db.VarChar(64)
-  owner_id     String   @db.VarChar(128)
-  status_json  String   @db.Text
-  config_json  String   @db.Text
-  created_at   DateTime @default(now())
-  updated_at   DateTime @updatedAt
+  pkid_session    BigInt    @id @default(autoincrement())
+  uuid_session    String    @unique @default(uuid()) @db.Uuid
+  session_id      String    @db.VarChar(64)
+  owner_id        String    @db.VarChar(128)
+  status_json     String    @db.Text
+  config_json     String    @db.Text
+  creation_date   DateTime  @default(now())
+  updated_at      DateTime  @updatedAt
+  expiration_date DateTime?
 
   // Ownership-scoped queries (BOLA prevention) hit this index.
-  @@index([owner_id])
+  @@unique([owner_id, session_id], map: "uk_whatsapp_session_owner_session")
+  @@index([uuid_session], map: "idx_whatsapp_session_uuid")
+  @@index([owner_id], map: "idx_whatsapp_session_owner")
   @@map("whatsapp_session")
 }

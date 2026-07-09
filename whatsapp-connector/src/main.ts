@@ -13,15 +13,24 @@ import { HttpExceptionFilter } from './shared/filters/http-exception.filter';
 import { DomainExceptionFilter } from './shared/filters/domain-exception.filter';
 import { getCorrelationId } from './shared/context/request-context';
 import { setupOpenApi } from './config/openapi.config';
+import { readFileSync } from 'node:fs';
 
 async function bootstrap(): Promise<void> {
+  // Session credentials created by Baileys must never be group/world-readable.
+  process.umask(0o077);
   const config = getConfig();
 
   // bodyParser disabled here so we can register parsers with a media-aware limit below.
+  let httpsOptions: { cert: Buffer; key: Buffer } | undefined;
+  if (config.TLS_ENABLED) {
+    if (!config.TLS_CERT_PATH || !config.TLS_KEY_PATH) throw new Error('TLS paths are required');
+    httpsOptions = { cert: readFileSync(config.TLS_CERT_PATH), key: readFileSync(config.TLS_KEY_PATH) };
+  }
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: false,
     bufferLogs: true,
     bodyParser: false,
+    ...(httpsOptions ? { httpsOptions } : {}),
   });
 
   const logger = new PinoLoggerService(config);

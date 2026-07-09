@@ -2,7 +2,7 @@ node_modules/
 dist/
 .env
 .env.local
-sessions/
+/sessions/
 *.log
 coverage/
 .DS_Store

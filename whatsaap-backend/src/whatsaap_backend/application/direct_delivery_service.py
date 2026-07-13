@@ -12,12 +12,25 @@ from uuid import uuid4
 
 import structlog
 
-from whatsaap_backend.domain.models import ActionType, IncomingMessage
+from whatsaap_backend.domain.models import (
+    ActionType,
+    BusinessMessage,
+    BusinessMessageOrigin,
+    BusinessMessageStatus,
+    IncomingMessage,
+)
 from whatsaap_backend.domain.rule_engine import RuleEvaluator, render_template
 from whatsaap_backend.infrastructure.integrations.connector_client import ConnectorDeliveryError
 
-from .ports import MessageSenderPort, UnitOfWorkFactory
-from .services import message_template_context, resolve_message_identity
+from .contracts import ScriptRunResult, ScriptSandboxUnavailableError
+from .ports import MessageSenderPort, ScriptSandboxPort, UnitOfWorkFactory
+from .services import (
+    DEFAULT_RUN_SCRIPT_ACK_TEXT,
+    build_script_input,
+    extract_email,
+    message_template_context,
+    resolve_message_identity,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -40,10 +53,12 @@ class ProcessIncomingMessageDirectService:
         uow_factory: UnitOfWorkFactory,
         sender: MessageSenderPort,
         evaluator: RuleEvaluator | None = None,
+        script_sandbox: ScriptSandboxPort | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._sender = sender
         self._evaluator = evaluator or RuleEvaluator()
+        self._script_sandbox = script_sandbox
 
     async def execute(self, message: IncomingMessage) -> DirectDeliveryResult:
         execution_id = uuid4()
@@ -103,6 +118,95 @@ class ProcessIncomingMessageDirectService:
                         next_state.update(configured)
                     elif action.type is ActionType.NOOP:
                         pass
+                    elif action.type is ActionType.RUN_SCRIPT:
+                        rule = rule_lookup.get(str(match.rule_id))
+                        ack_text_raw = str(action.params.get("ack_text") or "").strip()
+                        if ack_text_raw.lower() != "off":
+                            ack_context = {
+                                **template_context,
+                                "category": rule.category if rule else "general",
+                                "correo": extract_email(message.text),
+                            }
+                            ack_text = render_template(
+                                ack_text_raw or DEFAULT_RUN_SCRIPT_ACK_TEXT, ack_context
+                            )
+                            try:
+                                await self._sender.send_text(
+                                    session_id=message.session_id,
+                                    to=message.resolved_reply_to_jid,
+                                    text=ack_text,
+                                    quoted_message_id=message.message_id,
+                                )
+                                actions_sent += 1
+                            except ConnectorDeliveryError as error:
+                                logger.error(
+                                    "direct_delivery_send_failed",
+                                    execution_id=str(execution_id),
+                                    rule_id=str(match.rule_id),
+                                    status_code=error.status_code,
+                                )
+                                delivery_errors.append(f"rule={match.rule_id}: {error.detail}")
+
+                        script_source = str(action.params.get("script", ""))
+                        if self._script_sandbox is None:
+                            logger.error(
+                                "script_sandbox_not_configured", rule_id=str(match.rule_id)
+                            )
+                            result = ScriptRunResult(ok=False, error="sandbox_not_configured")
+                        else:
+                            try:
+                                result = await self._script_sandbox.run(
+                                    script_source=script_source,
+                                    input_payload=build_script_input(message, rule),
+                                )
+                            except ScriptSandboxUnavailableError:
+                                logger.error(
+                                    "script_sandbox_unavailable", rule_id=str(match.rule_id)
+                                )
+                                result = ScriptRunResult(ok=False, error="sandbox_unavailable")
+
+                        if result.ok:
+                            if result.business_data is not None:
+                                await uow.business_messages.add(
+                                    BusinessMessage(
+                                        tenant_id=message.tenant_id,
+                                        source_origin=BusinessMessageOrigin.WHATSAPP,
+                                        business_category=rule.category if rule else "general",
+                                        metadata=result.business_data,
+                                        session_id=message.session_id,
+                                        conversation_id=message.conversation_id,
+                                        message_id=message.message_id,
+                                        raw_sender=message.raw_sender or message.sender,
+                                        sender=message.sender,
+                                        reply_to_jid=message.resolved_reply_to_jid,
+                                        raw_text_hash=hashlib.sha256(
+                                            message.text.encode("utf-8")
+                                        ).hexdigest(),
+                                        processing_status=BusinessMessageStatus.PARSED,
+                                        created_by=f"rule:{match.rule_id}",
+                                    )
+                                )
+                            if result.reply_text:
+                                try:
+                                    await self._sender.send_text(
+                                        session_id=message.session_id,
+                                        to=message.resolved_reply_to_jid,
+                                        text=result.reply_text,
+                                        quoted_message_id=message.message_id,
+                                    )
+                                    actions_sent += 1
+                                except ConnectorDeliveryError as error:
+                                    logger.error(
+                                        "direct_delivery_send_failed",
+                                        execution_id=str(execution_id),
+                                        rule_id=str(match.rule_id),
+                                        status_code=error.status_code,
+                                    )
+                                    delivery_errors.append(f"rule={match.rule_id}: {error.detail}")
+                        else:
+                            logger.warning(
+                                "script_run_failed", rule_id=str(match.rule_id), error=result.error
+                            )
 
             if next_state != state:
                 await uow.conversations.save(

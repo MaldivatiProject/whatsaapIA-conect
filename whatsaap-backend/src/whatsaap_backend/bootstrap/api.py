@@ -20,6 +20,12 @@ from whatsaap_backend.infrastructure.persistence.database import (
     create_session_factory,
 )
 from whatsaap_backend.infrastructure.persistence.uow import SqlAlchemyUnitOfWorkFactory
+from whatsaap_backend.infrastructure.sandbox.subprocess_script_sandbox import (
+    SubprocessScriptSandbox,
+)
+from whatsaap_backend.presentation.api.business_messages_router import (
+    router as business_messages_router,
+)
 from whatsaap_backend.presentation.api.contact_identities_router import (
     router as contact_identities_router,
 )
@@ -49,7 +55,12 @@ def _configure_logging(settings: Settings) -> None:
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    script_sandbox: SubprocessScriptSandbox = app.state.script_sandbox
+    verified = await script_sandbox.verify()
+    logger.info("script_sandbox_verified", verified=verified)
+
     yield
+
     sender: HttpConnectorMessageSender = app.state.message_sender
     await sender.aclose()
     await app.state.engine.dispose()
@@ -69,13 +80,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         api_key=settings.CONNECTOR_API_KEY,
         timeout_seconds=settings.CONNECTOR_TIMEOUT_SECONDS,
     )
-    direct_delivery_service = ProcessIncomingMessageDirectService(uow_factory, message_sender)
+    script_sandbox = SubprocessScriptSandbox(settings)
+    direct_delivery_service = ProcessIncomingMessageDirectService(
+        uow_factory, message_sender, script_sandbox=script_sandbox
+    )
     webhook_ingest_service = IngestWebhookService(uow_factory)
 
     app.state.settings = settings
     app.state.engine = engine
     app.state.uow_factory = uow_factory
     app.state.message_sender = message_sender
+    app.state.script_sandbox = script_sandbox
     app.state.direct_delivery_service = direct_delivery_service
     app.state.webhook_ingest_service = webhook_ingest_service
 
@@ -92,6 +107,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(rules_router)
     app.include_router(executions_router)
     app.include_router(reports_router)
+    app.include_router(business_messages_router)
     app.include_router(webhook_router)
 
     return app

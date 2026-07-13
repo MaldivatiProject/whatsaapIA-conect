@@ -27,6 +27,7 @@
   --color-input: var(--input);
   --color-border: var(--border);
   --color-destructive: var(--destructive);
+  --color-destructive-text: var(--destructive-text);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent: var(--accent);
   --color-muted-foreground: var(--muted-foreground);
@@ -79,6 +80,7 @@
   --accent: oklch(0.682 0.111 246.092); /* #5B9FD9 */
   --accent-foreground: oklch(0.277 0.087 263.113);
   --destructive: oklch(0.577 0.245 27.325);
+  --destructive-text: oklch(0.505 0.213 27.518); /* rojo más oscuro que --destructive, legible (>4.5:1) sobre fondos tintados destructive/5–10 */
   --border: oklch(0.907 0 89.876); /* #E0E0E0 */
   --input: oklch(0.907 0 89.876);
   --ring: oklch(0.733 0.176 55.281); /* naranja, igual que primary */
@@ -95,7 +97,7 @@
   --sidebar: oklch(1 0 0);
   --sidebar-foreground: oklch(0.256 0.033 263.743);
   --sidebar-primary: oklch(0.733 0.176 55.281);
-  --sidebar-primary-foreground: oklch(0.212 0.051 261.606);
+  --sidebar-primary-foreground: oklch(1 0 0); /* blanco a pedido, sobre el naranja del ítem activo */
   --sidebar-accent: oklch(0.95 0 0);
   --sidebar-accent-foreground: oklch(0.277 0.087 263.113);
   --sidebar-border: oklch(0.907 0 89.876);
@@ -118,6 +120,7 @@
   --accent: oklch(0.308 0.055 246.68);
   --accent-foreground: oklch(0.956 0.015 257.197);
   --destructive: oklch(0.704 0.191 22.216);
+  --destructive-text: oklch(0.704 0.191 22.216); /* igual a --destructive: ya es legible sobre fondos oscuros tintados */
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.733 0.176 55.281);
@@ -133,7 +136,7 @@
   --sidebar: oklch(0.244 0.061 262.713);
   --sidebar-foreground: oklch(0.956 0.015 257.197);
   --sidebar-primary: oklch(0.733 0.176 55.281);
-  --sidebar-primary-foreground: oklch(0.212 0.051 261.606);
+  --sidebar-primary-foreground: oklch(1 0 0); /* blanco a pedido, sobre el naranja del ítem activo */
   --sidebar-accent: oklch(0.308 0.055 246.68);
   --sidebar-accent-foreground: oklch(0.956 0.015 257.197);
   --sidebar-border: oklch(1 0 0 / 10%);

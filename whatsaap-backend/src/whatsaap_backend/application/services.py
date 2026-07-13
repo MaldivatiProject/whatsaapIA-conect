@@ -3,16 +3,44 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from whatsaap_backend.domain.models import ActionType, IncomingMessage
+import structlog
+
+from whatsaap_backend.domain.models import (
+    ActionType,
+    BusinessMessage,
+    BusinessMessageOrigin,
+    BusinessMessageStatus,
+    BusinessRule,
+    IncomingMessage,
+    RuleAction,
+    RuleMatch,
+)
 from whatsaap_backend.domain.rule_engine import RuleEvaluator, render_template
 
-from .contracts import MessageEnvelope, OutboxDraft
-from .ports import UnitOfWorkFactory
+from .contracts import MessageEnvelope, OutboxDraft, ScriptRunResult, ScriptSandboxUnavailableError
+from .ports import ScriptSandboxPort, UnitOfWorkFactory
+
+logger = structlog.get_logger(__name__)
+
+DEFAULT_RUN_SCRIPT_ACK_TEXT = (
+    "Recibimos tu solicitud, la estamos procesando. Te avisamos apenas termine."
+)
+
+_EMAIL_PATTERN = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+
+
+def extract_email(text: str) -> str:
+    """Best-effort email lookup so ack_text templates can reference
+    {{ correo }} without any script-specific label parsing — generic across
+    any RUN_SCRIPT rule whose inbound message happens to contain an email."""
+    match = _EMAIL_PATTERN.search(text)
+    return match.group(0) if match else ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +125,33 @@ def message_template_context(message: IncomingMessage) -> dict[str, Any]:
     }
 
 
+def build_script_input(message: IncomingMessage, rule: BusinessRule | None) -> dict[str, Any]:
+    """Build the JSON payload handed to a RUN_SCRIPT action's sandboxed
+    handle(message) function. Only plain, already-resolved data — no ORM
+    objects, no credentials, nothing the sandbox couldn't safely receive.
+    """
+
+    return {
+        "message": {
+            "text": message.text,
+            "sender": message.sender,
+            "raw_sender": message.raw_sender or message.sender,
+            "push_name": message.push_name,
+            "session_id": message.session_id,
+            "conversation_id": message.conversation_id,
+            "message_id": message.message_id,
+            "is_group": message.is_group,
+            "occurred_at": message.occurred_at.isoformat(),
+            "rule": {
+                "id": str(rule.uuid) if rule else None,
+                "version": rule.version if rule else None,
+                "category": rule.category if rule else "general",
+                "name": rule.name if rule else None,
+            },
+        }
+    }
+
+
 class IngestWebhookService:
     """Persist connector events into the outbox before acknowledging HTTP."""
 
@@ -119,10 +174,111 @@ class ProcessIncomingMessageService:
     """Deduplicate and evaluate one normalized inbound message atomically."""
 
     def __init__(
-        self, uow_factory: UnitOfWorkFactory, evaluator: RuleEvaluator | None = None
+        self,
+        uow_factory: UnitOfWorkFactory,
+        evaluator: RuleEvaluator | None = None,
+        script_sandbox: ScriptSandboxPort | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._evaluator = evaluator or RuleEvaluator()
+        self._script_sandbox = script_sandbox
+
+    async def _enqueue_send(
+        self,
+        uow: Any,
+        *,
+        execution_id: UUID,
+        correlation_id: str,
+        message: IncomingMessage,
+        text: str,
+    ) -> None:
+        envelope = MessageEnvelope(
+            message_type="whatsapp.message.send",
+            tenant_id=message.tenant_id,
+            producer="whatsaap-backend",
+            correlation_id=correlation_id,
+            causation_id=message.message_id,
+            payload={
+                "action_id": str(uuid4()),
+                "execution_id": str(execution_id),
+                "session_id": message.session_id,
+                "to": message.resolved_reply_to_jid,
+                "text": text,
+                "quoted_message_id": message.message_id,
+            },
+        )
+        await uow.outbox.add(
+            OutboxDraft(
+                exchange="whatsapp.commands",
+                routing_key="whatsapp.message.send.v1",
+                envelope=envelope,
+                aggregate_type="rule_execution",
+                aggregate_id=execution_id,
+            )
+        )
+
+    async def _run_script_action(
+        self,
+        uow: Any,
+        *,
+        execution_id: UUID,
+        correlation_id: str,
+        message: IncomingMessage,
+        match: RuleMatch,
+        action: RuleAction,
+        rule: BusinessRule | None,
+    ) -> int:
+        """Runs one RUN_SCRIPT action's sandbox and records its outcome. Called
+        after the ack-phase commit, so this may take as long as it needs
+        without holding the conversation-state lock or delaying the ack.
+        Returns the number of outbox send commands it created (0 or 1).
+        """
+        script_source = str(action.params.get("script", ""))
+        if self._script_sandbox is None:
+            logger.error("script_sandbox_not_configured", rule_id=str(match.rule_id))
+            result = ScriptRunResult(ok=False, error="sandbox_not_configured")
+        else:
+            try:
+                result = await self._script_sandbox.run(
+                    script_source=script_source,
+                    input_payload=build_script_input(message, rule),
+                )
+            except ScriptSandboxUnavailableError:
+                logger.error("script_sandbox_unavailable", rule_id=str(match.rule_id))
+                result = ScriptRunResult(ok=False, error="sandbox_unavailable")
+
+        if not result.ok:
+            logger.warning("script_run_failed", rule_id=str(match.rule_id), error=result.error)
+            return 0
+
+        if result.business_data is not None:
+            await uow.business_messages.add(
+                BusinessMessage(
+                    tenant_id=message.tenant_id,
+                    source_origin=BusinessMessageOrigin.WHATSAPP,
+                    business_category=rule.category if rule else "general",
+                    metadata=result.business_data,
+                    session_id=message.session_id,
+                    conversation_id=message.conversation_id,
+                    message_id=message.message_id,
+                    raw_sender=message.raw_sender or message.sender,
+                    sender=message.sender,
+                    reply_to_jid=message.resolved_reply_to_jid,
+                    raw_text_hash=hashlib.sha256(message.text.encode("utf-8")).hexdigest(),
+                    processing_status=BusinessMessageStatus.PARSED,
+                    created_by=f"rule:{match.rule_id}",
+                )
+            )
+        if result.reply_text:
+            await self._enqueue_send(
+                uow,
+                execution_id=execution_id,
+                correlation_id=correlation_id,
+                message=message,
+                text=result.reply_text,
+            )
+            return 1
+        return 0
 
     async def execute(self, message: IncomingMessage, correlation_id: str) -> ProcessMessageResult:
         execution_id = uuid4()
@@ -153,35 +309,24 @@ class ProcessIncomingMessageService:
             command_count = 0
             next_state = dict(state)
             template_context = message_template_context(message)
+            script_actions: list[tuple[RuleMatch, RuleAction, BusinessRule | None]] = []
 
+            # Pass 1 — fast actions only (SEND_TEXT/SET_STATE/NOOP) plus, for
+            # RUN_SCRIPT matches, an immediate "processing" ack. The actual
+            # script run is deferred to pass 2, after this transaction commits,
+            # so the ack reaches WhatsApp right away instead of waiting behind
+            # a slow Selenium run — and so the conversation-state row isn't
+            # locked for the whole script duration.
             for match in evaluation.matches:
                 for action in match.actions:
                     if action.type is ActionType.SEND_TEXT:
                         text = render_template(str(action.params.get("text", "")), template_context)
-                        action_id = uuid4()
-                        envelope = MessageEnvelope(
-                            message_type="whatsapp.message.send",
-                            tenant_id=message.tenant_id,
-                            producer="whatsaap-backend",
+                        await self._enqueue_send(
+                            uow,
+                            execution_id=execution_id,
                             correlation_id=correlation_id,
-                            causation_id=message.message_id,
-                            payload={
-                                "action_id": str(action_id),
-                                "execution_id": str(execution_id),
-                                "session_id": message.session_id,
-                                "to": message.resolved_reply_to_jid,
-                                "text": text,
-                                "quoted_message_id": message.message_id,
-                            },
-                        )
-                        await uow.outbox.add(
-                            OutboxDraft(
-                                exchange="whatsapp.commands",
-                                routing_key="whatsapp.message.send.v1",
-                                envelope=envelope,
-                                aggregate_type="rule_execution",
-                                aggregate_id=execution_id,
-                            )
+                            message=message,
+                            text=text,
                         )
                         action_count += 1
                         command_count += 1
@@ -192,6 +337,28 @@ class ProcessIncomingMessageService:
                         next_state.update(configured)
                         action_count += 1
                     elif action.type is ActionType.NOOP:
+                        action_count += 1
+                    elif action.type is ActionType.RUN_SCRIPT:
+                        rule = rule_lookup.get(str(match.rule_id))
+                        ack_text_raw = str(action.params.get("ack_text") or "").strip()
+                        if ack_text_raw.lower() != "off":
+                            ack_context = {
+                                **template_context,
+                                "category": rule.category if rule else "general",
+                                "correo": extract_email(message.text),
+                            }
+                            ack_text = render_template(
+                                ack_text_raw or DEFAULT_RUN_SCRIPT_ACK_TEXT, ack_context
+                            )
+                            await self._enqueue_send(
+                                uow,
+                                execution_id=execution_id,
+                                correlation_id=correlation_id,
+                                message=message,
+                                text=ack_text,
+                            )
+                            command_count += 1
+                        script_actions.append((match, action, rule))
                         action_count += 1
 
             if next_state != state:
@@ -210,7 +377,7 @@ class ProcessIncomingMessageService:
                 conversation_id=message.conversation_id,
                 message_id=message.message_id,
                 matched_rule_ids=matched_ids,
-                status="ACTIONS_PENDING" if command_count else "COMPLETED",
+                status="ACTIONS_PENDING" if (command_count or script_actions) else "COMPLETED",
                 input_metadata={
                     "message_type": message.message_type,
                     "is_group": message.is_group,
@@ -227,6 +394,30 @@ class ProcessIncomingMessageService:
             )
             await uow.inbox.mark_processed(message.message_id)
             await uow.commit()
+
+            # Pass 2 — run any RUN_SCRIPT actions now that the ack is already
+            # committed/published. Each script run is independent, so one
+            # slow or failing script doesn't delay or block another rule's ack.
+            for match, action, rule in script_actions:
+                command_count += await self._run_script_action(
+                    uow,
+                    execution_id=execution_id,
+                    correlation_id=correlation_id,
+                    message=message,
+                    match=match,
+                    action=action,
+                    rule=rule,
+                )
+
+            if script_actions:
+                await uow.executions.update_status(
+                    tenant_id=message.tenant_id,
+                    execution_id=execution_id,
+                    status="ACTIONS_PENDING" if command_count else "COMPLETED",
+                    metadata_patch={"commands_created": command_count},
+                )
+                await uow.commit()
+
             return ProcessMessageResult(
                 duplicate=False,
                 execution_id=str(execution_id),

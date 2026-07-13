@@ -1,6 +1,9 @@
 "use client";
 
+import { useMemo, useState } from "react";
+import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { Badge } from "@/shared/components/ui/badge";
+import { Button } from "@/shared/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/components/ui/card";
 import {
   Table,
@@ -10,7 +13,9 @@ import {
   TableHeader,
   TableRow,
 } from "@/shared/components/ui/table";
-import type { ReportsPayload } from "@/features/reports/types/report.types";
+import { TablePagination } from "@/shared/components/layout/TablePagination";
+import { usePagination } from "@/shared/hooks/usePagination";
+import type { ReportMessage, ReportsPayload } from "@/features/reports/types/report.types";
 
 function number(value: number) {
   return new Intl.NumberFormat("es-CO").format(value);
@@ -30,6 +35,56 @@ function statusVariant(status: string): "success" | "destructive" | "outline" | 
   return "outline";
 }
 
+type MessageSortKey = "created_at" | "session_id" | "status" | "replies_sent_or_queued";
+
+function SortableHead({
+  label,
+  sortKey,
+  activeKey,
+  direction,
+  onSort,
+}: {
+  label: string;
+  sortKey: MessageSortKey;
+  activeKey: MessageSortKey;
+  direction: "asc" | "desc";
+  onSort: (key: MessageSortKey) => void;
+}) {
+  const isActive = activeKey === sortKey;
+  const Icon = isActive ? (direction === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown;
+  return (
+    <TableHead>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={() => onSort(sortKey)}
+        className="-ml-2.5 h-auto gap-1 px-2.5 py-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase hover:text-foreground"
+        aria-label={`Ordenar por ${label}`}
+      >
+        {label}
+        <Icon className="h-3.5 w-3.5" aria-hidden="true" />
+      </Button>
+    </TableHead>
+  );
+}
+
+function sortMessages(
+  messages: ReportMessage[],
+  key: MessageSortKey,
+  direction: "asc" | "desc",
+): ReportMessage[] {
+  const sorted = [...messages].sort((a, b) => {
+    if (key === "created_at") {
+      return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+    }
+    if (key === "replies_sent_or_queued") {
+      return a.replies_sent_or_queued - b.replies_sent_or_queued;
+    }
+    return a[key].localeCompare(b[key]);
+  });
+  return direction === "asc" ? sorted : sorted.reverse();
+}
+
 function MetricCard({ label, value }: { label: string; value: number }) {
   return (
     <Card size="sm">
@@ -45,6 +100,26 @@ function MetricCard({ label, value }: { label: string; value: number }) {
 
 export function ReportsDashboard({ reports }: { reports: ReportsPayload }) {
   const { summary, messages, categories, rules, deliveries } = reports;
+  const [sortKey, setSortKey] = useState<MessageSortKey>("created_at");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+
+  function handleSort(key: MessageSortKey) {
+    if (key === sortKey) {
+      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDirection("asc");
+    }
+  }
+
+  const sortedMessages = useMemo(
+    () => sortMessages(messages, sortKey, sortDirection),
+    [messages, sortKey, sortDirection],
+  );
+  const { page, setPage, pageCount, pageItems, totalItems, pageSize } = usePagination(
+    sortedMessages,
+    10,
+  );
 
   return (
     <div className="space-y-6">
@@ -156,24 +231,48 @@ export function ReportsDashboard({ reports }: { reports: ReportsPayload }) {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
+      <Card className="gap-0 py-0">
+        <CardHeader className="border-b py-4">
           <CardTitle>Últimos mensajes procesados</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="px-0">
           <Table>
             <TableHeader>
               <TableRow>
-                <TableHead>Fecha</TableHead>
-                <TableHead>Sesión</TableHead>
+                <SortableHead
+                  label="Fecha"
+                  sortKey="created_at"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleSort}
+                />
+                <SortableHead
+                  label="Sesión"
+                  sortKey="session_id"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleSort}
+                />
                 <TableHead>Remitente</TableHead>
                 <TableHead>Categorías</TableHead>
-                <TableHead>Estado</TableHead>
-                <TableHead>Respuestas</TableHead>
+                <SortableHead
+                  label="Estado"
+                  sortKey="status"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleSort}
+                />
+                <SortableHead
+                  label="Respuestas"
+                  sortKey="replies_sent_or_queued"
+                  activeKey={sortKey}
+                  direction={sortDirection}
+                  onSort={handleSort}
+                />
               </TableRow>
             </TableHeader>
             <TableBody>
-              {messages.map((message) => (
+              {pageItems.map((message) => (
                 <TableRow key={message.id}>
                   <TableCell>{dateTime(message.created_at)}</TableCell>
                   <TableCell>{message.session_id}</TableCell>
@@ -207,6 +306,13 @@ export function ReportsDashboard({ reports }: { reports: ReportsPayload }) {
               )}
             </TableBody>
           </Table>
+          <TablePagination
+            page={page}
+            pageCount={pageCount}
+            totalItems={totalItems}
+            pageSize={pageSize}
+            onPageChange={setPage}
+          />
         </CardContent>
       </Card>
     </div>

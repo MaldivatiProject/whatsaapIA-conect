@@ -9,7 +9,7 @@ from uuid import UUID
 
 from whatsaap_backend.domain.models import BusinessMessage, BusinessRule, ContactIdentity
 
-from .contracts import OutboxDraft
+from .contracts import OutboxDraft, ScriptRunResult
 
 
 class RuleRepository(Protocol):
@@ -167,6 +167,21 @@ class MessageSenderPort(Protocol):
         text: str,
         quoted_message_id: str | None = None,
     ) -> str: ...
+
+
+class ScriptSandboxPort(Protocol):
+    """Runs an admin-uploaded RUN_SCRIPT action's source in an isolated
+    subprocess (see infrastructure/sandbox/SubprocessScriptSandbox). Scripts
+    may need real network access (e.g. Selenium driving headless Chrome), so
+    network is intentionally *not* restricted — but the implementation must
+    never give the script DB/AMQP/API credentials: it only ever receives
+    `input_payload` (message + rule metadata) over stdin and returns a
+    ScriptRunResult built from the script's stdout.
+    """
+
+    async def run(
+        self, *, script_source: str, input_payload: dict[str, Any]
+    ) -> ScriptRunResult: ...
 
 
 class AutomationUnitOfWork(Protocol):

@@ -1,6 +1,6 @@
 "use client";
 
-import { Pencil, Trash2 } from "lucide-react";
+import { Code2, Pencil, Trash2 } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -35,6 +35,7 @@ export function RulesTable({ rules, onToggleEnabled, onEdit, onDelete }: RulesTa
     <Table>
       <TableHeader>
         <TableRow>
+          <TableHead title="Menor número = se evalúa primero">Orden</TableHead>
           <TableHead>Nombre</TableHead>
           <TableHead>Categoría</TableHead>
           <TableHead>Condición</TableHead>
@@ -46,12 +47,23 @@ export function RulesTable({ rules, onToggleEnabled, onEdit, onDelete }: RulesTa
       <TableBody>
         {rules.map((rule) => (
           <TableRow key={rule.id}>
+            <TableCell className="font-mono text-xs text-muted-foreground">{rule.priority}</TableCell>
             <TableCell className="font-medium">{rule.name}</TableCell>
             <TableCell>
               <Badge variant="outline">{rule.category || "general"}</Badge>
             </TableCell>
             <TableCell className="text-muted-foreground">{summarizeRuleConditions(rule)}</TableCell>
-            <TableCell className="text-muted-foreground">{summarizeRuleActions(rule)}</TableCell>
+            <TableCell className="text-muted-foreground">
+              <div className="flex items-center gap-2">
+                {rule.actions.some((action) => action.type === "run_script") && (
+                  <Badge variant="outline" className="gap-1">
+                    <Code2 className="h-3 w-3" aria-hidden="true" />
+                    Script
+                  </Badge>
+                )}
+                {summarizeRuleActions(rule)}
+              </div>
+            </TableCell>
             <TableCell>
               <Badge variant={rule.enabled ? "success" : "outline"}>
                 {rule.enabled ? "Activa" : "Inactiva"}

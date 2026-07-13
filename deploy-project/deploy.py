@@ -29,6 +29,18 @@ BACKEND_SERVICES = [
     "whatsaap-backend-connector-bridge",
 ]
 APP_SERVICES = BACKEND_SERVICES + ["whatsapp-connector", "whatsapp-dashboard"]
+SERVICE_CONTAINERS = {
+    "postgres": "whatsapp-platform-postgres",
+    "valkey": "whatsapp-platform-valkey",
+    "rabbitmq": "whatsapp-platform-rabbitmq",
+    "whatsaap-backend-api": "whatsaap-backend-api",
+    "whatsaap-backend-worker-rules": "whatsaap-backend-worker-rules",
+    "whatsaap-backend-worker-delivery": "whatsaap-backend-worker-delivery",
+    "whatsaap-backend-outbox-relay": "whatsaap-backend-outbox-relay",
+    "whatsaap-backend-connector-bridge": "whatsaap-backend-connector-bridge",
+    "whatsapp-connector": "whatsapp-connector",
+    "whatsapp-dashboard": "whatsapp-dashboard",
+}
 
 ENV_LAYOUT: list[tuple[str, list[str]]] = [
     ("Project identity", ["COMPOSE_PROJECT_NAME", "DOCKER_NETWORK_NAME"]),
@@ -49,7 +61,15 @@ ENV_LAYOUT: list[tuple[str, list[str]]] = [
     ("Runtime modes", ["NODE_ENV", "APP_ENV", "CONNECTOR_LOG_LEVEL", "BACKEND_LOG_LEVEL"]),
     (
         "PostgreSQL shared by backend migrations and optional connector persistence",
-        ["POSTGRES_DB", "POSTGRES_USER", "POSTGRES_PASSWORD", "DATABASE_SCHEMA", "DB_POOL_SIZE"],
+        [
+            "POSTGRES_DB",
+            "POSTGRES_USER",
+            "POSTGRES_PASSWORD",
+            "POSTGRES_HOST_BIND",
+            "POSTGRES_HOST_PORT",
+            "DATABASE_SCHEMA",
+            "DB_POOL_SIZE",
+        ],
     ),
     (
         "RabbitMQ shared event bus",
@@ -370,6 +390,86 @@ def service_health(container_id: str) -> str:
     return result.stdout.strip() or "unknown"
 
 
+def expected_project(values: dict[str, str]) -> str:
+    return values.get("COMPOSE_PROJECT_NAME") or "whatsaapia-platform"
+
+
+def inspect_container(name: str) -> dict[str, str] | None:
+    template = (
+        "{{.Name}}\t"
+        "{{index .Config.Labels \"com.docker.compose.project\"}}\t"
+        "{{index .Config.Labels \"com.docker.compose.service\"}}\t"
+        "{{.State.Status}}"
+    )
+    result = docker(["inspect", "--format", template, name], capture=True, check=False)
+    if result.returncode != 0:
+        return None
+    raw_name, project, service, status = (result.stdout.strip().split("\t") + ["", "", "", ""])[:4]
+    return {
+        "name": raw_name.removeprefix("/"),
+        "project": "" if project == "<no value>" else project,
+        "service": "" if service == "<no value>" else service,
+        "status": status,
+    }
+
+
+def foreign_container_conflicts(values: dict[str, str]) -> list[dict[str, str]]:
+    project = expected_project(values)
+    conflicts: list[dict[str, str]] = []
+    for service, container_name in SERVICE_CONTAINERS.items():
+        info = inspect_container(container_name)
+        if info is None:
+            continue
+        if info["project"] != project:
+            conflicts.append({**info, "expected_service": service})
+    return conflicts
+
+
+def format_conflicts(conflicts: list[dict[str, str]]) -> str:
+    lines = [
+        "Contenedores con nombres esperados por deploy-project, pero creados por otro compose:",
+    ]
+    for item in conflicts:
+        owner = item["project"] or "sin-label-compose"
+        service = item["service"] or "desconocido"
+        lines.append(
+            f"- {item['name']}: owner={owner}/{service}, status={item['status']}, "
+            f"esperado_por={item['expected_service']}"
+        )
+    return "\n".join(lines)
+
+
+def assert_no_foreign_containers(values: dict[str, str]) -> None:
+    conflicts = foreign_container_conflicts(values)
+    if not conflicts:
+        return
+    raise SystemExit(
+        f"{format_conflicts(conflicts)}\n\n"
+        "El stack esta partido entre varios docker-compose. Para que deploy-project "
+        "tome control, ejecuta: python3 deploy.py up --build --takeover"
+    )
+
+
+def takeover_foreign_containers(values: dict[str, str], assume_yes: bool) -> None:
+    conflicts = foreign_container_conflicts(values)
+    if not conflicts:
+        print("OK: no hay contenedores conflictivos de otros compose.")
+        return
+
+    print(format_conflicts(conflicts))
+    print(
+        "\nTakeover removera SOLO estos contenedores conflictivos para que deploy-project "
+        "los recree. No elimina volumenes Docker."
+    )
+    if not assume_yes:
+        answer = input("Continuar con takeover? [y/N]: ").strip().lower()
+        if answer not in {"y", "yes", "s", "si"}:
+            raise SystemExit("Takeover cancelado.")
+
+    names = [item["name"] for item in conflicts]
+    docker(["rm", "-f", *names])
+
+
 def wait_for_services(services: list[str], timeout_seconds: int) -> None:
     deadline = time.monotonic() + timeout_seconds
     last_status: dict[str, str] = {}
@@ -393,13 +493,23 @@ def wait_for_services(services: list[str], timeout_seconds: int) -> None:
         raise SystemExit(f"Timeout esperando servicios: {names}")
 
 
-def deploy_up(build: bool, skip_migrate: bool, timeout_seconds: int, assume_yes: bool) -> None:
+def deploy_up(
+    build: bool,
+    skip_migrate: bool,
+    timeout_seconds: int,
+    assume_yes: bool,
+    takeover: bool,
+) -> None:
     if not ENV_FILE.exists():
         init_env(assume_yes=assume_yes)
 
     values = parse_env(ENV_FILE)
     ensure_network(values)
     compose(["config"], capture=True)
+    if takeover:
+        takeover_foreign_containers(values, assume_yes)
+    else:
+        assert_no_foreign_containers(values)
 
     print("\n[1/5] Infraestructura base")
     compose(["up", "-d", *INFRA_SERVICES])
@@ -407,26 +517,26 @@ def deploy_up(build: bool, skip_migrate: bool, timeout_seconds: int, assume_yes:
 
     if not skip_migrate:
         print("\n[2/5] Migraciones Flyway")
-        compose(["up", "--force-recreate", "--abort-on-container-exit", "--exit-code-from", "migrate", "migrate"])
+        compose(["run", "--rm", "migrate"])
     else:
         print("\n[2/5] Migraciones omitidas por --skip-migrate")
 
     print("\n[3/5] Backend")
-    backend_args = ["up", "-d"]
+    backend_args = ["up", "-d", "--no-deps"]
     if build:
         backend_args.append("--build")
     compose(backend_args + BACKEND_SERVICES)
     wait_for_services(BACKEND_SERVICES, timeout_seconds)
 
     print("\n[4/5] Connector")
-    connector_args = ["up", "-d"]
+    connector_args = ["up", "-d", "--no-deps"]
     if build:
         connector_args.append("--build")
     compose(connector_args + ["whatsapp-connector"])
     wait_for_services(["whatsapp-connector"], timeout_seconds)
 
     print("\n[5/5] Dashboard")
-    dashboard_args = ["up", "-d"]
+    dashboard_args = ["up", "-d", "--no-deps"]
     if build:
         dashboard_args.append("--build")
     compose(dashboard_args + ["whatsapp-dashboard"])
@@ -443,9 +553,10 @@ def deploy_up(build: bool, skip_migrate: bool, timeout_seconds: int, assume_yes:
 def deploy_migrate(timeout_seconds: int) -> None:
     values = parse_env(ENV_FILE)
     ensure_network(values)
+    assert_no_foreign_containers(values)
     compose(["up", "-d", *INFRA_SERVICES])
     wait_for_services(INFRA_SERVICES, timeout_seconds)
-    compose(["up", "--force-recreate", "--abort-on-container-exit", "--exit-code-from", "migrate", "migrate"])
+    compose(["run", "--rm", "migrate"])
 
 
 def deploy_down(remove_volumes: bool, assume_yes: bool) -> None:
@@ -484,6 +595,7 @@ def doctor() -> None:
         raise SystemExit("AUTH_STATE_ENCRYPTION_KEY debe ser base64 de exactamente 32 bytes.")
     ensure_network(values)
     compose(["config"], capture=True)
+    assert_no_foreign_containers(values)
     print("OK: Docker, red, .env y compose global validados.")
 
 
@@ -491,7 +603,7 @@ def interactive_menu() -> None:
     options = {
         "1": ("Inicializar/actualizar .env", lambda: init_env(False)),
         "2": ("Ver plan de despliegue", print_plan),
-        "3": ("Desplegar todo", lambda: deploy_up(True, False, 240, False)),
+        "3": ("Desplegar todo", lambda: deploy_up(True, False, 240, False, False)),
         "4": ("Estado", lambda: compose(["ps"])),
         "5": ("Logs", lambda: compose(["logs", "-f", "--tail", "200"])),
         "6": ("Bajar stack", lambda: deploy_down(False, False)),
@@ -521,6 +633,14 @@ def build_parser() -> argparse.ArgumentParser:
     up.add_argument("--skip-migrate", action="store_true", help="Omitir migraciones Flyway.")
     up.add_argument("--timeout", type=int, default=240, help="Timeout por etapa en segundos.")
     up.add_argument("-y", "--yes", action="store_true", help="No preguntar si falta .env.")
+    up.add_argument(
+        "--takeover",
+        action="store_true",
+        help=(
+            "Remueve contenedores con nombres esperados por deploy-project pero "
+            "creados por otros compose, y luego despliega todo."
+        ),
+    )
 
     migrate = sub.add_parser("migrate", help="Ejecuta solo migraciones Flyway.")
     migrate.add_argument("--timeout", type=int, default=180)
@@ -541,6 +661,12 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("config", help="Renderiza el compose global.")
     sub.add_parser("plan", help="Muestra el orden de despliegue.")
     sub.add_parser("doctor", help="Valida Docker, .env, red y compose.")
+
+    takeover = sub.add_parser(
+        "takeover",
+        help="Remueve contenedores conflictivos de otros compose sin borrar volumenes.",
+    )
+    takeover.add_argument("-y", "--yes", action="store_true", help="No pedir confirmacion.")
     return parser
 
 
@@ -554,7 +680,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "init":
             init_env(args.yes)
         elif args.command == "up":
-            deploy_up(args.build, args.skip_migrate, args.timeout, args.yes)
+            deploy_up(args.build, args.skip_migrate, args.timeout, args.yes, args.takeover)
         elif args.command == "migrate":
             deploy_migrate(args.timeout)
         elif args.command == "down":
@@ -575,6 +701,12 @@ def main(argv: list[str] | None = None) -> int:
             print_plan()
         elif args.command == "doctor":
             doctor()
+        elif args.command == "takeover":
+            if not ENV_FILE.exists():
+                raise SystemExit("Falta .env. Ejecuta primero: python3 deploy.py init")
+            values = parse_env(ENV_FILE)
+            ensure_network(values)
+            takeover_foreign_containers(values, args.yes)
         else:
             parser.print_help()
             return 2

@@ -33,8 +33,20 @@ export function buildCreateRuleInput(values: SimpleRuleFormValues): CreateRuleIn
   return {
     name: values.name.trim(),
     category: values.category.trim() || "general",
+    priority: values.priority,
     conditions: [condition],
-    actions: [{ type: "send_text", params: { text: values.replyText.trim() } }],
+    actions:
+      values.actionType === "run_script"
+        ? [
+            {
+              type: "run_script",
+              params: {
+                script: values.scriptSource,
+                ...(values.ackText.trim() ? { ack_text: values.ackText.trim() } : {}),
+              },
+            },
+          ]
+        : [{ type: "send_text", params: { text: values.replyText.trim() } }],
   };
 }
 
@@ -42,16 +54,24 @@ export function buildCreateRuleInput(values: SimpleRuleFormValues): CreateRuleIn
 export function ruleToFormValues(rule: Rule): SimpleRuleFormValues {
   const condition = rule.conditions[0];
   const sendText = rule.actions.find((action) => action.type === "send_text");
+  const runScript = rule.actions.find((action) => action.type === "run_script");
   const replyText = sendText ? String(sendText.params.text ?? "") : "";
+  const scriptSource = runScript ? String(runScript.params.script ?? "") : "";
+  const ackText = runScript ? String(runScript.params.ack_text ?? "") : "";
 
   const base: SimpleRuleFormValues = {
     name: rule.name,
     category: rule.category || "general",
+    priority: rule.priority,
     field: "sender",
     senderValue: "",
     isGroupValue: "true",
     textValue: "",
+    actionType: runScript ? "run_script" : "send_text",
     replyText,
+    scriptSource,
+    scriptFileName: scriptSource ? "script.py (cargado)" : "",
+    ackText,
   };
 
   if (!condition) return base;
@@ -83,6 +103,10 @@ export function summarizeRuleActions(rule: Rule): string {
   if (sendText) {
     const text = String(sendText.params.text ?? "");
     return `Responder: "${text.length > 60 ? `${text.slice(0, 60)}…` : text}"`;
+  }
+  const runScript = rule.actions.find((action) => action.type === "run_script");
+  if (runScript) {
+    return "Ejecuta un script Python";
   }
   return rule.actions.map((action) => action.type).join(", ") || "—";
 }

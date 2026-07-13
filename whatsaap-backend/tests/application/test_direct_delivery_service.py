@@ -3,9 +3,12 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+from whatsaap_backend.application.contracts import ScriptRunResult, ScriptSandboxUnavailableError
 from whatsaap_backend.application.direct_delivery_service import ProcessIncomingMessageDirectService
+from whatsaap_backend.application.services import DEFAULT_RUN_SCRIPT_ACK_TEXT
 from whatsaap_backend.domain.models import (
     ActionType,
+    BusinessMessage,
     BusinessRule,
     Condition,
     ConditionOperator,
@@ -97,6 +100,15 @@ class _FakeExecutions:
         self.rows.append(values)
 
 
+class _FakeBusinessMessages:
+    def __init__(self) -> None:
+        self.added: list[BusinessMessage] = []
+
+    async def add(self, message: BusinessMessage) -> BusinessMessage:
+        self.added.append(message)
+        return message
+
+
 class _FakeUow:
     def __init__(
         self, rules: list[BusinessRule], identities: list[ContactIdentity] | None = None
@@ -106,6 +118,7 @@ class _FakeUow:
         self.inbox = _FakeInbox()
         self.conversations = _FakeConversations()
         self.executions = _FakeExecutions()
+        self.business_messages = _FakeBusinessMessages()
         self.commits = 0
 
     async def __aenter__(self) -> _FakeUow:
@@ -147,6 +160,45 @@ class _FakeSender:
             }
         )
         return "3EB0FAKE"
+
+
+class _FakeScriptSandbox:
+    """Fake ScriptSandboxPort. Never actually runs anything — the real
+    sandbox mechanism (a real subprocess with rlimits) is covered separately in
+    tests/infrastructure/test_subprocess_script_sandbox.py.
+    """
+
+    def __init__(
+        self, result: ScriptRunResult | None = None, raise_unavailable: bool = False
+    ) -> None:
+        self._result = result if result is not None else ScriptRunResult(ok=True)
+        self._raise_unavailable = raise_unavailable
+        self.calls: list[dict[str, Any]] = []
+
+    async def run(
+        self, *, script_source: str, input_payload: dict[str, Any]
+    ) -> ScriptRunResult:
+        self.calls.append({"script_source": script_source, "input_payload": input_payload})
+        if self._raise_unavailable:
+            raise ScriptSandboxUnavailableError("sandbox not verified")
+        return self._result
+
+
+def _script_rule(
+    target_sender: str,
+    script: str = "def handle(message):\n    return {}",
+    ack_text: str = "off",
+) -> BusinessRule:
+    # ack_text="off" by default so existing tests can assert on the
+    # script's own sends without the immediate ack in the way — the ack
+    # itself is covered by its own tests below.
+    return BusinessRule(
+        tenant_id="acme",
+        name="run-script-rule",
+        category="traslado_tienda",
+        conditions=(Condition("sender", ConditionOperator.EQUALS, target_sender),),
+        actions=(RuleAction(ActionType.RUN_SCRIPT, {"script": script, "ack_text": ack_text}),),
+    )
 
 
 def _message(text: str = "hola", sender: str = "573001112233@s.whatsapp.net") -> IncomingMessage:
@@ -284,3 +336,113 @@ async def test_is_group_condition_matches_group_messages() -> None:
 
     assert result.actions_sent == 1
     assert fake_sender.sent[0]["to"] == "123-456@g.us"
+
+
+async def test_run_script_action_persists_business_data() -> None:
+    sender = "573243744739@s.whatsapp.net"
+    uow = _FakeUow([_script_rule(sender)])
+    fake_sender = _FakeSender()
+    fake_sandbox = _FakeScriptSandbox(
+        ScriptRunResult(ok=True, business_data={"PROMOTOR": "WOMER", "CEDULA": "1023031587"})
+    )
+
+    await ProcessIncomingMessageDirectService(
+        _FakeFactory(uow), fake_sender, script_sandbox=fake_sandbox
+    ).execute(_message(sender=sender))
+
+    assert len(uow.business_messages.added) == 1
+    added = uow.business_messages.added[0]
+    assert added.business_category == "traslado_tienda"
+    assert added.metadata == {"PROMOTOR": "WOMER", "CEDULA": "1023031587"}
+    assert added.sender == sender
+    assert fake_sender.sent == []  # no reply_text was returned, nothing sent
+    assert len(fake_sandbox.calls) == 1
+    rule_payload = fake_sandbox.calls[0]["input_payload"]["message"]["rule"]
+    assert rule_payload["category"] == "traslado_tienda"
+
+
+async def test_run_script_action_sends_reply_text() -> None:
+    sender = "573243744739@s.whatsapp.net"
+    uow = _FakeUow([_script_rule(sender)])
+    fake_sender = _FakeSender()
+    fake_sandbox = _FakeScriptSandbox(ScriptRunResult(ok=True, reply_text="Gracias, procesando."))
+
+    await ProcessIncomingMessageDirectService(
+        _FakeFactory(uow), fake_sender, script_sandbox=fake_sandbox
+    ).execute(_message(sender=sender))
+
+    assert uow.business_messages.added == []  # no business_data returned, nothing persisted
+    assert len(fake_sender.sent) == 1
+    assert fake_sender.sent[0]["text"] == "Gracias, procesando."
+
+
+async def test_run_script_sandbox_unavailable_does_not_raise() -> None:
+    sender = "573243744739@s.whatsapp.net"
+    uow = _FakeUow([_script_rule(sender)])
+    fake_sender = _FakeSender()
+    fake_sandbox = _FakeScriptSandbox(raise_unavailable=True)
+
+    result = await ProcessIncomingMessageDirectService(
+        _FakeFactory(uow), fake_sender, script_sandbox=fake_sandbox
+    ).execute(_message(sender=sender))
+
+    assert result.duplicate is False
+    assert uow.business_messages.added == []
+    assert fake_sender.sent == []
+    # dispatch failure isn't a delivery error
+    assert uow.executions.rows[0]["status"] == "COMPLETED"
+
+
+async def test_run_script_failure_does_not_persist_or_reply() -> None:
+    sender = "573243744739@s.whatsapp.net"
+    uow = _FakeUow([_script_rule(sender)])
+    fake_sender = _FakeSender()
+    fake_sandbox = _FakeScriptSandbox(ScriptRunResult(ok=False, error="ValueError: bad format"))
+
+    await ProcessIncomingMessageDirectService(
+        _FakeFactory(uow), fake_sender, script_sandbox=fake_sandbox
+    ).execute(_message(sender=sender))
+
+    assert uow.business_messages.added == []
+    assert fake_sender.sent == []
+
+
+async def test_run_script_sends_default_ack_before_script_result() -> None:
+    sender = "573243744739@s.whatsapp.net"
+    uow = _FakeUow([_script_rule(sender, ack_text="")])
+    fake_sender = _FakeSender()
+    fake_sandbox = _FakeScriptSandbox(ScriptRunResult(ok=True, reply_text="Listo."))
+
+    await ProcessIncomingMessageDirectService(
+        _FakeFactory(uow), fake_sender, script_sandbox=fake_sandbox
+    ).execute(_message(sender=sender))
+
+    assert len(fake_sender.sent) == 2
+    assert fake_sender.sent[0]["text"] == DEFAULT_RUN_SCRIPT_ACK_TEXT
+    assert fake_sender.sent[1]["text"] == "Listo."
+
+
+async def test_run_script_ack_off_sends_nothing_upfront() -> None:
+    sender = "573243744739@s.whatsapp.net"
+    uow = _FakeUow([_script_rule(sender, ack_text="off")])
+    fake_sender = _FakeSender()
+    fake_sandbox = _FakeScriptSandbox(ScriptRunResult(ok=True))
+
+    await ProcessIncomingMessageDirectService(
+        _FakeFactory(uow), fake_sender, script_sandbox=fake_sandbox
+    ).execute(_message(sender=sender))
+
+    assert fake_sender.sent == []
+
+
+async def test_run_script_without_sandbox_configured_does_not_raise() -> None:
+    sender = "573243744739@s.whatsapp.net"
+    uow = _FakeUow([_script_rule(sender)])
+    fake_sender = _FakeSender()
+
+    result = await ProcessIncomingMessageDirectService(_FakeFactory(uow), fake_sender).execute(
+        _message(sender=sender)
+    )
+
+    assert result.duplicate is False
+    assert uow.business_messages.added == []

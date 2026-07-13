@@ -51,6 +51,30 @@ class Settings(BaseSettings):
     OUTBOX_MAX_ATTEMPTS: int = Field(default=10, ge=1, le=100)
     OUTBOX_STALE_LOCK_SECONDS: int = Field(default=300, ge=30, le=3600)
 
+    # RUN_SCRIPT sandbox (see infrastructure/sandbox/). Sized for scripts that
+    # may drive a real headless browser (Selenium/Chrome) — page loads and
+    # multi-step automation routinely take tens of seconds, and Chrome's
+    # multi-process tree (renderer/GPU/zygote/crashpad) needs generous
+    # process/file-descriptor headroom. No memory rlimit: RLIMIT_AS breaks
+    # Chrome outright (it reserves large virtual-memory regions independent
+    # of actual usage) — the wall-clock timeout is the real backstop.
+    # SCRIPT_SANDBOX_CPU_SECONDS is kept below SCRIPT_SANDBOX_TIMEOUT_SECONDS
+    # on purpose: a CPU-bound script should hit its own RLIMIT_CPU kill
+    # (clean, inside the sandbox) before the host's wall-clock timeout has
+    # to SIGKILL the process group from outside.
+    SCRIPT_SANDBOX_TIMEOUT_SECONDS: float = Field(default=90, gt=0, le=300)
+    SCRIPT_SANDBOX_CPU_SECONDS: int = Field(default=60, ge=1, le=280)
+    SCRIPT_SANDBOX_MAX_PROCESSES: int = Field(default=512, ge=1, le=2048)
+    SCRIPT_SANDBOX_MAX_OPEN_FILES: int = Field(default=1024, ge=8, le=4096)
+    SCRIPT_SANDBOX_MAX_OUTPUT_BYTES: int = Field(default=65_536, ge=1024, le=1_048_576)
+    SCRIPT_MAX_SOURCE_BYTES: int = Field(default=65_536, ge=256, le=1_048_576)
+
+    # worker-rules processes its RabbitMQ queue with this many messages
+    # in flight at once (each RUN_SCRIPT action may hold one for tens of
+    # seconds running Selenium) — bounded because each concurrent script
+    # can spawn a real headless Chrome process, which costs real memory/CPU.
+    WORKER_RULES_MAX_CONCURRENCY: int = Field(default=4, ge=1, le=32)
+
     @field_validator("DATABASE_SCHEMA")
     @classmethod
     def validate_schema(cls, value: str) -> str:

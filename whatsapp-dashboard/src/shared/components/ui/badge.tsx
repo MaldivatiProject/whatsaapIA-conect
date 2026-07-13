@@ -14,8 +14,8 @@ const badgeVariants = cva(
         secondary:
           "bg-secondary text-secondary-foreground [a]:hover:bg-secondary/80",
         destructive:
-          // text-destructive at 10% bg only reaches ~4:1 contrast (WCAG AA needs 4.5:1) — darkened for compliance.
-          "bg-destructive/10 text-red-700 focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:text-red-400 dark:focus-visible:ring-destructive/40 [a]:hover:bg-destructive/20",
+          // text-destructive at 10% bg only reaches ~4:1 contrast (WCAG AA needs 4.5:1) — text-destructive-text is darkened for compliance.
+          "bg-destructive/10 text-destructive-text focus-visible:ring-destructive/20 dark:bg-destructive/20 dark:focus-visible:ring-destructive/40 [a]:hover:bg-destructive/20",
         outline:
           "border-border text-foreground [a]:hover:bg-muted [a]:hover:text-muted-foreground",
         ghost:

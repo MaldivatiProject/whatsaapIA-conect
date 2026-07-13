@@ -129,6 +129,9 @@ domain         → ninguna capa externa ni framework
 - `OutboxMessage`: contrato pendiente de publicación confirmada.
 - `ContactIdentity`: mapeo configurable `@lid → @s.whatsapp.net` por tenant y
   opcionalmente por sesión, usado para normalizar remitentes y respuestas.
+- `BusinessMessage`: mensaje/dato de negocio trazable por origen (`WHATSAPP`,
+  `EMAIL`, `MANUAL`) y categoría (`TRASLADO_TIENDA`, `CREAR_USUARIO`, etc.),
+  con metadata estructurada en JSONB para decisiones y reportes.
 
 Las condiciones usan una DSL declarativa con operadores permitidos. No se
 ejecutará Python, JavaScript, SQL ni expresiones arbitrarias almacenadas en DB.
@@ -275,6 +278,50 @@ curl -H "x-api-key: <tenant-secret>" \
 curl -H "x-api-key: <tenant-secret>" \
   "http://localhost:8000/api/v1/reports/categories"
 ```
+
+### Mensajes de negocio trazables
+
+La tabla `automation_schema.business_messages` guarda datos de negocio
+extraídos desde distintos canales sin acoplarlos a WhatsApp. El canal queda en
+`source_origin` y la decisión de negocio en `business_category`.
+
+Ejemplo para un traslado de tienda recibido por WhatsApp:
+
+```json
+{
+  "source_origin": "WHATSAPP",
+  "business_category": "TRASLADO_TIENDA",
+  "metadata": {
+    "promoter": "WOMER",
+    "full_name": "Jesús Alberto Quiñones Quiñones",
+    "document_number": "1023031587",
+    "phone": "3027529244",
+    "email": "jesus.quinonestem@movilpt.co",
+    "new_store": "Kiosco Único",
+    "new_warehouse": "533"
+  }
+}
+```
+
+Ejemplo para creación de usuario cargada manualmente:
+
+```json
+{
+  "source_origin": "MANUAL",
+  "business_category": "CREAR_USUARIO",
+  "created_by": "operador.backoffice",
+  "metadata": {
+    "full_name": "Nombre del usuario",
+    "document_number": "123456789",
+    "role": "promotor",
+    "email": "usuario@example.com"
+  }
+}
+```
+
+Por defecto no se almacena el texto completo del mensaje; se guarda
+`raw_text_hash` para trazabilidad/idempotencia sin duplicar PII innecesaria. La
+metadata sí puede contener PII de negocio y debe tratarse como dato sensible.
 
 ### Identidades WhatsApp (`@lid` ↔ phone JID)
 

@@ -63,3 +63,14 @@ def test_template_renders_allow_listed_scalars() -> None:
 def test_template_rejects_unsupported_variables() -> None:
     with pytest.raises(InvalidRuleError):
         render_template("{{ __class__ }}", {})
+
+
+def test_template_renders_run_script_only_fields() -> None:
+    # category/correo are only meaningful for run_script's ack_text, not as
+    # rule condition fields, but they must still work as template variables.
+    rendered = render_template(
+        "{{ category }} / {{ correo }}",
+        {"category": "traslado_tienda", "correo": "user@example.com"},
+    )
+
+    assert rendered == "traslado_tienda / user@example.com"

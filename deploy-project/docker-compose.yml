@@ -52,6 +52,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-whatsapp_connector}
       POSTGRES_USER: ${POSTGRES_USER:-wac}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be configured}
+    ports:
+      - "${POSTGRES_HOST_BIND:-127.0.0.1}:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -125,6 +127,15 @@ services:
     command: ["whatsaap-api"]
     ports:
       - "${BACKEND_HOST_PORT:-8000}:8000"
+    # init: true gives this container a real PID-1 (zombie-reaping) init —
+    # required because RUN_SCRIPT actions may launch headless Chrome
+    # (Selenium), whose multi-process tree (renderer/GPU/zygote/crashpad)
+    # needs proper reaping. No extra capabilities are needed for this —
+    # Chrome runs fine under a plain cap_drop: [ALL] + no-new-privileges,
+    # confirmed empirically.
+    init: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD", "python", "-m", "whatsaap_backend.bootstrap.healthcheck", "api"]
       interval: 30s
@@ -136,6 +147,10 @@ services:
     <<: *backend
     container_name: whatsaap-backend-worker-rules
     command: ["whatsaap-worker-rules"]
+    # See whatsaap-backend-api above: same RUN_SCRIPT/Chrome reaping requirement.
+    init: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     healthcheck:
       test:
         [
@@ -155,6 +170,9 @@ services:
     <<: *backend
     container_name: whatsaap-backend-worker-delivery
     command: ["whatsaap-worker-delivery"]
+    # Does not dispatch rule actions (no RUN_SCRIPT) — drop every capability.
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     healthcheck:
       test:
         [
@@ -174,6 +192,8 @@ services:
     <<: *backend
     container_name: whatsaap-backend-outbox-relay
     command: ["whatsaap-outbox-relay"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     healthcheck:
       test: ["CMD", "python", "-m", "whatsaap_backend.bootstrap.healthcheck", "relay"]
       interval: 30s
@@ -185,6 +205,8 @@ services:
     <<: *backend
     container_name: whatsaap-backend-connector-bridge
     command: ["whatsaap-connector-bridge"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
     healthcheck:
       test:
         [

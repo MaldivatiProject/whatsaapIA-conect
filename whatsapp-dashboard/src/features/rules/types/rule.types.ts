@@ -23,7 +23,7 @@ export interface RuleCondition {
 }
 
 export interface RuleAction {
-  type: "send_text" | "set_state" | "noop";
+  type: "send_text" | "set_state" | "noop" | "run_script";
   params: Record<string, unknown>;
 }
 
@@ -49,6 +49,7 @@ export interface CreateRuleInput {
   conditions: RuleCondition[];
   actions: RuleAction[];
   session_id?: string | null;
+  priority?: number;
 }
 
 export interface UpdateRuleInput {
@@ -57,15 +58,27 @@ export interface UpdateRuleInput {
   category?: string;
   conditions?: RuleCondition[];
   actions?: RuleAction[];
+  priority?: number;
 }
+
+export type ActionKind = "send_text" | "run_script";
 
 /** The simplified single-condition shape the dashboard's form authors. */
 export interface SimpleRuleFormValues {
   name: string;
   category: string;
+  /** Orden de evaluación: menor se evalúa primero. Mismo campo que el backend usa para ordenar reglas activas. */
+  priority: number;
   field: ConditionField;
   senderValue: string;
   isGroupValue: "true" | "false";
   textValue: string;
+  actionType: ActionKind;
   replyText: string;
+  /** Full UTF-8 source of an uploaded .py script (run_script action only). */
+  scriptSource: string;
+  /** Display-only — the backend stores no filename, just the source. */
+  scriptFileName: string;
+  /** Mensaje inmediato enviado al matchear la regla, antes de correr el script. Vacío = default del backend; "off" = sin ack. */
+  ackText: string;
 }

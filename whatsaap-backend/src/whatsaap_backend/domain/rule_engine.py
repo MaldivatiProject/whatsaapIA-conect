@@ -30,6 +30,12 @@ ALLOWED_FIELDS = {
     "conversation_id",
     "state",
 }
+# Extra placeholders usable in templates (send_text/run_script ack_text) but
+# not meaningful as rule condition fields, so kept out of ALLOWED_FIELDS.
+TEMPLATE_ONLY_FIELDS = {
+    "category",  # the matched rule's own category
+    "correo",  # best-effort email auto-extracted from the inbound text
+}
 TEMPLATE_PATTERN = re.compile(r"\{\{\s*([a-z_][a-z0-9_]*)\s*\}\}")
 
 
@@ -159,9 +165,11 @@ def render_template(template: str, context: Mapping[str, Any]) -> str:
     if len(template) > 4096:
         raise InvalidRuleError("Template exceeds 4096 characters")
 
+    allowed = (ALLOWED_FIELDS - {"state"}) | TEMPLATE_ONLY_FIELDS
+
     def replace(match: re.Match[str]) -> str:
         key = match.group(1)
-        if key not in ALLOWED_FIELDS - {"state"}:
+        if key not in allowed:
             raise InvalidRuleError(f"Unsupported template variable: {key}")
         value = context.get(key, "")
         return str(value) if value is not None else ""

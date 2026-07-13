@@ -23,6 +23,7 @@ class ActionType(StrEnum):
     SEND_TEXT = "send_text"
     SET_STATE = "set_state"
     NOOP = "noop"
+    RUN_SCRIPT = "run_script"
 
 
 class BusinessMessageOrigin(StrEnum):

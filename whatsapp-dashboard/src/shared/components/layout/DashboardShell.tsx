@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   BarChart3,
+  ClipboardCheck,
   Fingerprint,
   LayoutDashboard,
   ListChecks,
@@ -35,6 +36,7 @@ const NAV_ITEMS = [
   { href: "/rules", label: "Reglas", icon: ListChecks },
   { href: "/identities", label: "Identidades", icon: Fingerprint },
   { href: "/reports", label: "Reportes", icon: BarChart3 },
+  { href: "/business-messages", label: "Resultados", icon: ClipboardCheck },
   { href: "/activity", label: "Actividad", icon: Radio },
 ] as const;
 
@@ -53,8 +55,8 @@ function NavLinks({ pathname, onNavigate }: { pathname: string; onNavigate?: () 
               "flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-colors",
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               isActive
-                ? "bg-primary text-white"
-                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground",
+                ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                : "text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
             )}
           >
             <Icon className="h-4 w-4" aria-hidden="true" />

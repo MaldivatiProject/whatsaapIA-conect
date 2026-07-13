@@ -2,19 +2,44 @@
 
 from __future__ import annotations
 
+import ast
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from whatsaap_backend.config import get_settings
 from whatsaap_backend.domain.models import (
     ActionType,
+    BusinessMessage,
     BusinessRule,
     Condition,
     ConditionOperator,
     ContactIdentity,
     RuleAction,
+)
+
+# Defense-in-depth only: rejects obviously-wrong/accidental uploads early
+# with a clear message. This is trivially bypassable (e.g. string
+# concatenation to build "import subprocess") and is NOT a real security
+# boundary. The actual protections are enforced by
+# infrastructure/sandbox/SubprocessScriptSandbox: no DB/AMQP/API
+# credentials in the process environment, resource limits, and a hard
+# wall-clock timeout. Network access is *intentionally* not restricted
+# (scripts may need it, e.g. Selenium driving headless Chrome) — so
+# "import socket" is not denylisted.
+_RUN_SCRIPT_DENYLIST = (
+    "import subprocess",
+    "import ctypes",
+    "import multiprocessing",
+    "os.system",
+    "os.fork",
+    "os.exec",
+    "__import__",
+    "eval(",
+    "exec(",
+    "importlib",
 )
 
 
@@ -45,6 +70,44 @@ class ConditionSchema(BaseModel):
 class RuleActionSchema(BaseModel):
     type: ActionType
     params: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_run_script(self) -> RuleActionSchema:
+        if self.type is not ActionType.RUN_SCRIPT:
+            return self
+
+        script = self.params.get("script")
+        if not isinstance(script, str) or not script.strip():
+            raise ValueError("run_script action requires a non-empty string params.script")
+
+        max_bytes = get_settings().SCRIPT_MAX_SOURCE_BYTES
+        if len(script.encode("utf-8")) > max_bytes:
+            raise ValueError(f"script exceeds the maximum allowed size ({max_bytes} bytes)")
+
+        try:
+            tree = ast.parse(script)
+        except SyntaxError as error:
+            raise ValueError(f"script has invalid Python syntax: {error}") from error
+
+        if not any(
+            isinstance(node, ast.FunctionDef) and node.name == "handle" for node in tree.body
+        ):
+            raise ValueError("script must define a top-level `def handle(message):`")
+
+        for pattern in _RUN_SCRIPT_DENYLIST:
+            if pattern in script:
+                raise ValueError(f"script contains a disallowed pattern: {pattern!r}")
+
+        ack_text = self.params.get("ack_text")
+        if ack_text is not None:
+            if not isinstance(ack_text, str):
+                raise ValueError("run_script action params.ack_text must be a string when present")
+            if len(ack_text) > 4096:
+                raise ValueError(
+                    "run_script action params.ack_text must be at most 4096 characters"
+                )
+
+        return self
 
     def to_domain(self) -> RuleAction:
         return RuleAction(type=self.type, params=self.params)
@@ -289,3 +352,35 @@ class ReportDeliveryOut(BaseModel):
     status: str
     messages: int
     replies_sent_or_queued: int
+
+
+class BusinessMessageOut(BaseModel):
+    """A RUN_SCRIPT action's structured output (business_data), persisted so
+    the outcome of an execution — e.g. GUARDADO/YA_CORRECTA/NO_ENCONTRADO —
+    is visible without a direct database query."""
+
+    id: UUID
+    business_category: str
+    source_origin: str
+    processing_status: str
+    metadata: dict[str, Any]
+    session_id: str | None
+    conversation_id: str | None
+    sender: str | None
+    received_at: datetime
+    created_by: str | None
+
+    @classmethod
+    def from_domain(cls, message: BusinessMessage) -> BusinessMessageOut:
+        return cls(
+            id=message.uuid,
+            business_category=message.business_category,
+            source_origin=message.source_origin.value,
+            processing_status=message.processing_status.value,
+            metadata=message.metadata,
+            session_id=message.session_id,
+            conversation_id=message.conversation_id,
+            sender=message.sender,
+            received_at=message.received_at,
+            created_by=message.created_by,
+        )

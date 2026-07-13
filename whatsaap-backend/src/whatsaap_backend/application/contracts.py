@@ -55,3 +55,31 @@ class OutboxRecord:
     payload: dict[str, Any]
     headers: dict[str, Any]
     attempt_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ScriptRunResult:
+    """Outcome of running an admin-uploaded RUN_SCRIPT action in the sandbox.
+
+    `ok=False` means the *script* failed (bad parse, raised an exception,
+    timed out, etc.) — this is expected/routine and must never propagate as
+    an exception out of ScriptSandboxPort.run(). The only exception that
+    port is allowed to raise is ScriptSandboxUnavailableError, reserved for
+    "the isolation mechanism itself could not be verified" (see
+    SubprocessScriptSandbox.verify()) — a fail-closed condition distinct from
+    an ordinary script bug.
+    """
+
+    ok: bool
+    business_data: dict[str, Any] | None = None
+    reply_text: str | None = None
+    error: str | None = None
+
+
+class ScriptSandboxUnavailableError(RuntimeError):
+    """Raised when the sandbox's isolation guarantees could not be verified.
+
+    RUN_SCRIPT must fail closed: if this is raised, the caller must treat
+    the action as failed rather than fall back to running the script
+    unisolated.
+    """

@@ -1,0 +1,16 @@
+USUARIO = "prodriguez@alocredit.co"
+PASSWORD = "alocredit"
+CODE_AUTH = ""
+
+
+USER_MYSQL_CO = alo_estadisticas
+PASS_MYSQL_CO = 4K9ml8e2vqlj
+HOST_MYSQL_CO = 57.130.40.1
+DATABASE_CO = alocreditprod
+PORT_MYSQL_CO = 3306
+
+USER_MYSQL_PE= alocredperu_view
+PASS_MYSQL_PE = rM776cv1gBgj
+HOST_MYSQL_PE = 57.130.40.1
+DATABASE_PE = alocreditpe
+PORT_MYSQL_PE = 3306

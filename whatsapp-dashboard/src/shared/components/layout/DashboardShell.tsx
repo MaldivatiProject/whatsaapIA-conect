@@ -5,8 +5,8 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   BarChart3,
+  ChevronRight,
   ClipboardCheck,
-  Fingerprint,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -29,16 +29,71 @@ import { useAuthStore } from "@/features/auth/store/authStore";
 import { useConnectorSocket } from "@/shared/hooks/useConnectorSocket";
 import { useActivityIngest } from "@/features/activity/hooks/useActivityIngest";
 
+const ROUTE_LABELS: Record<string, string> = {
+  "/": "Inicio",
+  "/sessions": "Sesiones",
+  "/messages": "Mensajes",
+  "/rules": "Reglas",
+  "/identities": "Identidades",
+  "/reports": "Reportes",
+  "/business-messages": "Resultados",
+  "/activity": "Actividad",
+};
+
 const NAV_ITEMS = [
-  { href: "/", label: "Resumen", icon: LayoutDashboard },
+  { href: "/", label: "Inicio", icon: LayoutDashboard },
   { href: "/sessions", label: "Sesiones", icon: Smartphone },
   { href: "/messages", label: "Mensajes", icon: MessagesSquare },
   { href: "/rules", label: "Reglas", icon: ListChecks },
-  { href: "/identities", label: "Identidades", icon: Fingerprint },
   { href: "/reports", label: "Reportes", icon: BarChart3 },
   { href: "/business-messages", label: "Resultados", icon: ClipboardCheck },
   { href: "/activity", label: "Actividad", icon: Radio },
 ] as const;
+
+function routeLabel(pathname: string) {
+  if (ROUTE_LABELS[pathname]) return ROUTE_LABELS[pathname];
+
+  const segment = pathname.split("/").filter(Boolean).at(-1);
+  if (!segment) return "Inicio";
+  return segment
+    .split("-")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function DashboardBreadcrumb({ pathname }: { pathname: string }) {
+  const currentLabel = routeLabel(pathname);
+  const isRoot = pathname === "/";
+
+  return (
+    <nav aria-label="Miga de pan" className="min-w-0">
+      <ol className="flex min-w-0 items-center gap-1 text-sm">
+        {!isRoot && (
+          <>
+            <li className="hidden items-center sm:flex">
+              <Link
+                href="/"
+                className="truncate text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+              >
+                Inicio
+              </Link>
+            </li>
+            <li className="hidden text-muted-foreground sm:flex" aria-hidden="true">
+              <ChevronRight className="h-4 w-4" />
+            </li>
+          </>
+        )}
+        <li
+          aria-current="page"
+          className="truncate font-medium text-foreground"
+          title={currentLabel}
+        >
+          {currentLabel}
+        </li>
+      </ol>
+    </nav>
+  );
+}
 
 function NavLinks({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
   return (
@@ -121,19 +176,22 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       </Sheet>
 
       <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-between border-b px-4 py-3 sm:px-6">
-          <div className="flex items-center gap-2 sm:hidden">
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Abrir navegación"
-              onClick={() => setMobileNavOpen(true)}
-            >
-              <Menu className="h-5 w-5" aria-hidden="true" />
-            </Button>
-            <span className="font-heading text-sm font-bold tracking-tight">Helpdesk</span>
+        <header className="flex items-center justify-between gap-4 border-b px-4 py-3 sm:px-6">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="flex items-center gap-2 sm:hidden">
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Abrir navegación"
+                onClick={() => setMobileNavOpen(true)}
+              >
+                <Menu className="h-5 w-5" aria-hidden="true" />
+              </Button>
+              <span className="font-heading text-sm font-bold tracking-tight">Helpdesk</span>
+            </div>
+            <DashboardBreadcrumb pathname={pathname} />
           </div>
-          <div className="ml-auto flex items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             <span className="text-sm text-muted-foreground">Eventos en vivo</span>
             <Badge variant={connected ? "success" : "destructive"}>
               {connected ? "Conectado" : "Desconectado"}

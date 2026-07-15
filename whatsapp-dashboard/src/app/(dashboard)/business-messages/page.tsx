@@ -10,9 +10,7 @@ import { Card } from "@/shared/components/ui/card";
 import { Input } from "@/shared/components/ui/input";
 import { Label } from "@/shared/components/ui/label";
 import { Skeleton } from "@/shared/components/ui/skeleton";
-import { TablePagination } from "@/shared/components/layout/TablePagination";
 import { ErrorState } from "@/shared/components/layout/ErrorState";
-import { usePagination } from "@/shared/hooks/usePagination";
 
 function matchesSearch(message: BusinessMessage, term: string): boolean {
   const haystack = [
@@ -40,11 +38,6 @@ export default function BusinessMessagesPage() {
     if (!term) return messages;
     return messages.filter((message) => matchesSearch(message, term));
   }, [messages, search]);
-
-  const { page, setPage, pageCount, pageItems, totalItems, pageSize } = usePagination(
-    filteredMessages,
-    10,
-  );
 
   return (
     <div className="space-y-6">
@@ -94,23 +87,15 @@ export default function BusinessMessagesPage() {
 
       {error && <ErrorState message={`No se pudieron cargar los resultados: ${error.message}`} />}
 
-      {!isLoading && !error && filteredMessages.length === 0 && messages.length > 0 && (
-        <p className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-          Ningún resultado coincide con la búsqueda.
-        </p>
-      )}
-
-      {!isLoading && !error && messages.length === 0 && <BusinessMessagesTable messages={[]} />}
-
-      {!isLoading && !error && filteredMessages.length > 0 && (
+      {!isLoading && !error && (
         <Card className="gap-0 py-0">
-          <BusinessMessagesTable messages={pageItems} />
-          <TablePagination
-            page={page}
-            pageCount={pageCount}
-            totalItems={totalItems}
-            pageSize={pageSize}
-            onPageChange={setPage}
+          <BusinessMessagesTable
+            messages={filteredMessages}
+            emptyMessage={
+              messages.length > 0
+                ? "Ningún resultado coincide con la búsqueda."
+                : undefined
+            }
           />
         </Card>
       )}

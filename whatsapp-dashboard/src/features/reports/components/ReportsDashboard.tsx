@@ -1,21 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
+import { DataTable, type DataTableColumn } from "@/shared/components/data/DataTable";
 import { Badge } from "@/shared/components/ui/badge";
-import { Button } from "@/shared/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/shared/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/shared/components/ui/table";
-import { TablePagination } from "@/shared/components/layout/TablePagination";
-import { usePagination } from "@/shared/hooks/usePagination";
-import type { ReportMessage, ReportsPayload } from "@/features/reports/types/report.types";
+import type {
+  ReportCategory,
+  ReportMessage,
+  ReportRule,
+  ReportsPayload,
+} from "@/features/reports/types/report.types";
 
 function number(value: number) {
   return new Intl.NumberFormat("es-CO").format(value);
@@ -35,56 +28,6 @@ function statusVariant(status: string): "success" | "destructive" | "outline" | 
   return "outline";
 }
 
-type MessageSortKey = "created_at" | "session_id" | "status" | "replies_sent_or_queued";
-
-function SortableHead({
-  label,
-  sortKey,
-  activeKey,
-  direction,
-  onSort,
-}: {
-  label: string;
-  sortKey: MessageSortKey;
-  activeKey: MessageSortKey;
-  direction: "asc" | "desc";
-  onSort: (key: MessageSortKey) => void;
-}) {
-  const isActive = activeKey === sortKey;
-  const Icon = isActive ? (direction === "asc" ? ArrowUp : ArrowDown) : ArrowUpDown;
-  return (
-    <TableHead>
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={() => onSort(sortKey)}
-        className="-ml-2.5 h-auto gap-1 px-2.5 py-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase hover:text-foreground"
-        aria-label={`Ordenar por ${label}`}
-      >
-        {label}
-        <Icon className="h-3.5 w-3.5" aria-hidden="true" />
-      </Button>
-    </TableHead>
-  );
-}
-
-function sortMessages(
-  messages: ReportMessage[],
-  key: MessageSortKey,
-  direction: "asc" | "desc",
-): ReportMessage[] {
-  const sorted = [...messages].sort((a, b) => {
-    if (key === "created_at") {
-      return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-    }
-    if (key === "replies_sent_or_queued") {
-      return a.replies_sent_or_queued - b.replies_sent_or_queued;
-    }
-    return a[key].localeCompare(b[key]);
-  });
-  return direction === "asc" ? sorted : sorted.reverse();
-}
-
 function MetricCard({ label, value }: { label: string; value: number }) {
   return (
     <Card size="sm">
@@ -100,26 +43,161 @@ function MetricCard({ label, value }: { label: string; value: number }) {
 
 export function ReportsDashboard({ reports }: { reports: ReportsPayload }) {
   const { summary, messages, categories, rules, deliveries } = reports;
-  const [sortKey, setSortKey] = useState<MessageSortKey>("created_at");
-  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
-
-  function handleSort(key: MessageSortKey) {
-    if (key === sortKey) {
-      setSortDirection((prev) => (prev === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortDirection("asc");
-    }
-  }
-
-  const sortedMessages = useMemo(
-    () => sortMessages(messages, sortKey, sortDirection),
-    [messages, sortKey, sortDirection],
-  );
-  const { page, setPage, pageCount, pageItems, totalItems, pageSize } = usePagination(
-    sortedMessages,
-    10,
-  );
+  const categoryColumns: DataTableColumn<ReportCategory>[] = [
+    {
+      id: "category",
+      header: "Categoría",
+      cell: (item) => <Badge variant="outline">{item.category}</Badge>,
+      exportValue: (item) => item.category,
+      sortValue: (item) => item.category,
+      pdfWidth: 150,
+    },
+    {
+      id: "messages",
+      header: "Mensajes",
+      cell: (item) => number(item.messages),
+      exportValue: (item) => item.messages,
+      sortValue: (item) => item.messages,
+      align: "right",
+      pdfWidth: 90,
+    },
+    {
+      id: "matched_messages",
+      header: "Con regla",
+      cell: (item) => number(item.matched_messages),
+      exportValue: (item) => item.matched_messages,
+      sortValue: (item) => item.matched_messages,
+      align: "right",
+      pdfWidth: 90,
+    },
+    {
+      id: "replies_sent_or_queued",
+      header: "Respuestas",
+      cell: (item) => number(item.replies_sent_or_queued),
+      exportValue: (item) => item.replies_sent_or_queued,
+      sortValue: (item) => item.replies_sent_or_queued,
+      align: "right",
+      pdfWidth: 95,
+    },
+    {
+      id: "failed_replies",
+      header: "Fallos",
+      cell: (item) => number(item.failed_replies),
+      exportValue: (item) => item.failed_replies,
+      sortValue: (item) => item.failed_replies,
+      align: "right",
+      pdfWidth: 80,
+    },
+  ];
+  const ruleColumns: DataTableColumn<ReportRule>[] = [
+    {
+      id: "rule_name",
+      header: "Regla",
+      cell: (item) => item.rule_name,
+      exportValue: (item) => item.rule_name,
+      sortValue: (item) => item.rule_name,
+      pdfWidth: 160,
+    },
+    {
+      id: "category",
+      header: "Categoría",
+      cell: (item) => <Badge variant="outline">{item.category}</Badge>,
+      exportValue: (item) => item.category,
+      sortValue: (item) => item.category,
+      pdfWidth: 120,
+    },
+    {
+      id: "matches",
+      header: "Matches",
+      cell: (item) => number(item.matches),
+      exportValue: (item) => item.matches,
+      sortValue: (item) => item.matches,
+      align: "right",
+      pdfWidth: 85,
+    },
+    {
+      id: "replies_sent_or_queued",
+      header: "Respuestas",
+      cell: (item) => number(item.replies_sent_or_queued),
+      exportValue: (item) => item.replies_sent_or_queued,
+      sortValue: (item) => item.replies_sent_or_queued,
+      align: "right",
+      pdfWidth: 95,
+    },
+    {
+      id: "failed_replies",
+      header: "Fallos",
+      cell: (item) => number(item.failed_replies),
+      exportValue: (item) => item.failed_replies,
+      sortValue: (item) => item.failed_replies,
+      align: "right",
+      pdfWidth: 80,
+    },
+  ];
+  const messageColumns: DataTableColumn<ReportMessage>[] = [
+    {
+      id: "created_at",
+      header: "Fecha",
+      cell: (message) => dateTime(message.created_at),
+      exportValue: (message) => dateTime(message.created_at),
+      sortValue: (message) => new Date(message.created_at),
+      pdfWidth: 95,
+    },
+    {
+      id: "session_id",
+      header: "Sesión",
+      cell: (message) => message.session_id,
+      exportValue: (message) => message.session_id,
+      sortValue: (message) => message.session_id,
+      pdfWidth: 110,
+    },
+    {
+      id: "sender",
+      header: "Remitente",
+      cell: (message) => message.sender || message.raw_sender || message.conversation_id,
+      exportValue: (message) => message.sender || message.raw_sender || message.conversation_id,
+      sortValue: (message) => message.sender || message.raw_sender || message.conversation_id,
+      cellClassName: "max-w-64 truncate font-mono text-xs",
+      pdfWidth: 155,
+    },
+    {
+      id: "matched_categories",
+      header: "Categorías",
+      cell: (message) => (
+        <div className="flex flex-wrap gap-1">
+          {(message.matched_categories.length ? message.matched_categories : ["unmatched"]).map(
+            (category) => (
+              <Badge key={category} variant="outline">
+                {category}
+              </Badge>
+            ),
+          )}
+        </div>
+      ),
+      exportValue: (message) =>
+        (message.matched_categories.length ? message.matched_categories : ["unmatched"]).join(", "),
+      sortValue: (message) =>
+        (message.matched_categories.length ? message.matched_categories : ["unmatched"]).join(", "),
+      pdfWidth: 135,
+    },
+    {
+      id: "status",
+      header: "Estado",
+      cell: (message) => <Badge variant={statusVariant(message.status)}>{message.status}</Badge>,
+      exportValue: (message) => message.status,
+      sortValue: (message) => message.status,
+      pdfWidth: 115,
+    },
+    {
+      id: "replies_sent_or_queued",
+      header: "Respuestas",
+      cell: (message) => number(message.replies_sent_or_queued),
+      exportValue: (message) => message.replies_sent_or_queued,
+      sortValue: (message) => message.replies_sent_or_queued,
+      align: "right",
+      pdfWidth: 85,
+    },
+  ];
 
   return (
     <div className="space-y-6">
@@ -139,37 +217,18 @@ export function ReportsDashboard({ reports }: { reports: ReportsPayload }) {
             <CardTitle>Mensajes por categoría</CardTitle>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Categoría</TableHead>
-                  <TableHead>Mensajes</TableHead>
-                  <TableHead>Con regla</TableHead>
-                  <TableHead>Respuestas</TableHead>
-                  <TableHead>Fallos</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {categories.map((item) => (
-                  <TableRow key={item.category}>
-                    <TableCell>
-                      <Badge variant="outline">{item.category}</Badge>
-                    </TableCell>
-                    <TableCell>{number(item.messages)}</TableCell>
-                    <TableCell>{number(item.matched_messages)}</TableCell>
-                    <TableCell>{number(item.replies_sent_or_queued)}</TableCell>
-                    <TableCell>{number(item.failed_replies)}</TableCell>
-                  </TableRow>
-                ))}
-                {categories.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={5} className="text-muted-foreground">
-                      Sin datos para el rango seleccionado.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
+            <DataTable
+              columns={categoryColumns}
+              rows={categories}
+              getRowKey={(item) => item.category}
+              emptyMessage="Sin datos para el rango seleccionado."
+              exportConfig={{
+                title: "Mensajes por categoría",
+                filename: "reporte-categorias",
+              }}
+              defaultSort={{ columnId: "messages", direction: "desc" }}
+              exportClassName="px-0"
+            />
           </CardContent>
         </Card>
 
@@ -178,37 +237,18 @@ export function ReportsDashboard({ reports }: { reports: ReportsPayload }) {
             <CardTitle>Reglas con más coincidencias</CardTitle>
           </CardHeader>
           <CardContent>
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>Regla</TableHead>
-                  <TableHead>Categoría</TableHead>
-                  <TableHead>Matches</TableHead>
-                  <TableHead>Respuestas</TableHead>
-                  <TableHead>Fallos</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rules.map((item) => (
-                  <TableRow key={item.rule_id}>
-                    <TableCell>{item.rule_name}</TableCell>
-                    <TableCell>
-                      <Badge variant="outline">{item.category}</Badge>
-                    </TableCell>
-                    <TableCell>{number(item.matches)}</TableCell>
-                    <TableCell>{number(item.replies_sent_or_queued)}</TableCell>
-                    <TableCell>{number(item.failed_replies)}</TableCell>
-                  </TableRow>
-                ))}
-                {rules.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={5} className="text-muted-foreground">
-                      Sin reglas ejecutadas para el rango seleccionado.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
+            <DataTable
+              columns={ruleColumns}
+              rows={rules}
+              getRowKey={(item) => item.rule_id}
+              emptyMessage="Sin reglas ejecutadas para el rango seleccionado."
+              exportConfig={{
+                title: "Reglas con más coincidencias",
+                filename: "reporte-reglas",
+              }}
+              defaultSort={{ columnId: "matches", direction: "desc" }}
+              exportClassName="px-0"
+            />
           </CardContent>
         </Card>
       </section>
@@ -236,86 +276,20 @@ export function ReportsDashboard({ reports }: { reports: ReportsPayload }) {
           <CardTitle>Últimos mensajes procesados</CardTitle>
         </CardHeader>
         <CardContent className="px-0">
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <SortableHead
-                  label="Fecha"
-                  sortKey="created_at"
-                  activeKey={sortKey}
-                  direction={sortDirection}
-                  onSort={handleSort}
-                />
-                <SortableHead
-                  label="Sesión"
-                  sortKey="session_id"
-                  activeKey={sortKey}
-                  direction={sortDirection}
-                  onSort={handleSort}
-                />
-                <TableHead>Remitente</TableHead>
-                <TableHead>Categorías</TableHead>
-                <SortableHead
-                  label="Estado"
-                  sortKey="status"
-                  activeKey={sortKey}
-                  direction={sortDirection}
-                  onSort={handleSort}
-                />
-                <SortableHead
-                  label="Respuestas"
-                  sortKey="replies_sent_or_queued"
-                  activeKey={sortKey}
-                  direction={sortDirection}
-                  onSort={handleSort}
-                />
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {pageItems.map((message) => (
-                <TableRow key={message.id}>
-                  <TableCell>{dateTime(message.created_at)}</TableCell>
-                  <TableCell>{message.session_id}</TableCell>
-                  <TableCell className="max-w-64 truncate font-mono text-xs">
-                    {message.sender || message.raw_sender || message.conversation_id}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex flex-wrap gap-1">
-                      {(message.matched_categories.length
-                        ? message.matched_categories
-                        : ["unmatched"]
-                      ).map((category) => (
-                        <Badge key={category} variant="outline">
-                          {category}
-                        </Badge>
-                      ))}
-                    </div>
-                  </TableCell>
-                  <TableCell>
-                    <Badge variant={statusVariant(message.status)}>{message.status}</Badge>
-                  </TableCell>
-                  <TableCell>{number(message.replies_sent_or_queued)}</TableCell>
-                </TableRow>
-              ))}
-              {messages.length === 0 && (
-                <TableRow>
-                  <TableCell colSpan={6} className="text-muted-foreground">
-                    Sin mensajes procesados para el rango seleccionado.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-          <TablePagination
-            page={page}
-            pageCount={pageCount}
-            totalItems={totalItems}
-            pageSize={pageSize}
-            onPageChange={setPage}
+          <DataTable
+            columns={messageColumns}
+            rows={messages}
+            getRowKey={(message) => message.id}
+            emptyMessage="Sin mensajes procesados para el rango seleccionado."
+            exportConfig={{
+              title: "Últimos mensajes procesados",
+              filename: "reporte-mensajes",
+            }}
+            defaultSort={{ columnId: "created_at", direction: "desc" }}
+            pagination={{ pageSize: 10 }}
           />
         </CardContent>
       </Card>
     </div>
   );
 }
-

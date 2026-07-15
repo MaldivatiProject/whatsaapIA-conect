@@ -8,9 +8,7 @@ import { SessionsTable } from "@/features/sessions/components/SessionsTable";
 import { QrDialog } from "@/features/sessions/components/QrDialog";
 import { Card } from "@/shared/components/ui/card";
 import { Skeleton } from "@/shared/components/ui/skeleton";
-import { TablePagination } from "@/shared/components/layout/TablePagination";
 import { ErrorState } from "@/shared/components/layout/ErrorState";
-import { usePagination } from "@/shared/hooks/usePagination";
 
 export default function SessionsPage() {
   useSessionsLiveSync();
@@ -24,7 +22,6 @@ export default function SessionsPage() {
     deleteSession,
   } = useSessions();
   const [qrSessionId, setQrSessionId] = useState<string | null>(null);
-  const { page, setPage, pageCount, pageItems, totalItems, pageSize } = usePagination(sessions, 10);
 
   return (
     <div className="space-y-6">
@@ -42,14 +39,10 @@ export default function SessionsPage() {
 
       {error && <ErrorState message={`No se pudieron cargar las sesiones: ${error.message}`} />}
 
-      {!isLoading && !error && sessions.length === 0 && (
-        <SessionsTable sessions={[]} onViewQr={setQrSessionId} onDisconnect={() => {}} onDelete={() => {}} />
-      )}
-
-      {!isLoading && !error && sessions.length > 0 && (
+      {!isLoading && !error && (
         <Card className="gap-0 py-0">
           <SessionsTable
-            sessions={pageItems}
+            sessions={sessions}
             onViewQr={setQrSessionId}
             onDisconnect={(id) => {
               if (confirm(`¿Desconectar la sesión "${id}"? Podrás reconectarla sin volver a escanear el QR.`)) {
@@ -61,13 +54,6 @@ export default function SessionsPage() {
                 deleteSession(id);
               }
             }}
-          />
-          <TablePagination
-            page={page}
-            pageCount={pageCount}
-            totalItems={totalItems}
-            pageSize={pageSize}
-            onPageChange={setPage}
           />
         </Card>
       )}

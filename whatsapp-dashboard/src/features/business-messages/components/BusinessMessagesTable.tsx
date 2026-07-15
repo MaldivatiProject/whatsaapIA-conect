@@ -2,14 +2,7 @@
 
 import { useState } from "react";
 import { Eye } from "lucide-react";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/shared/components/ui/table";
+import { DataTable, type DataTableColumn } from "@/shared/components/data/DataTable";
 import { Badge } from "@/shared/components/ui/badge";
 import { Button } from "@/shared/components/ui/button";
 import { BusinessMessageDetailDialog } from "@/features/business-messages/components/BusinessMessageDetailDialog";
@@ -53,72 +46,90 @@ function formatFecha(iso: string): string {
 
 interface BusinessMessagesTableProps {
   messages: BusinessMessage[];
+  emptyMessage?: string;
 }
 
-export function BusinessMessagesTable({ messages }: BusinessMessagesTableProps) {
+export function BusinessMessagesTable({ messages, emptyMessage }: BusinessMessagesTableProps) {
   const [selected, setSelected] = useState<BusinessMessage | null>(null);
-
-  if (messages.length === 0) {
-    return (
-      <p className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-        No hay mensajes de negocio todavía. Van a aparecer acá cuando una regla con acción
-        &quot;Ejecutar script Python&quot; devuelva datos estructurados (ej. un resultado de
-        traslado de tienda).
-      </p>
-    );
-  }
+  const columns: DataTableColumn<BusinessMessage>[] = [
+    {
+      id: "received_at",
+      header: "Fecha",
+      cell: (message) => formatFecha(message.received_at),
+      exportValue: (message) => formatFecha(message.received_at),
+      sortValue: (message) => new Date(message.received_at),
+      cellClassName: "text-muted-foreground",
+      pdfWidth: 95,
+    },
+    {
+      id: "business_category",
+      header: "Categoría",
+      cell: (message) => <Badge variant="outline">{message.business_category}</Badge>,
+      exportValue: (message) => message.business_category,
+      sortValue: (message) => message.business_category,
+      pdfWidth: 95,
+    },
+    {
+      id: "sender",
+      header: "Remitente",
+      cell: (message) => message.sender ?? "—",
+      exportValue: (message) => message.sender ?? "",
+      sortValue: (message) => message.sender ?? "",
+      cellClassName: "font-mono text-xs text-muted-foreground",
+      pdfWidth: 130,
+    },
+    {
+      id: "status",
+      header: "Estado",
+      cell: (message) => {
+        const estado = estadoDe(message);
+        return <Badge variant={estadoVariant(estado)}>{estado}</Badge>;
+      },
+      exportValue: (message) => estadoDe(message),
+      sortValue: (message) => estadoDe(message),
+      pdfWidth: 95,
+    },
+    {
+      id: "detail",
+      header: "Detalle",
+      cell: (message) => resumenDetalle(message),
+      exportValue: (message) => resumenDetalle(message),
+      sortValue: (message) => resumenDetalle(message),
+      cellClassName: "max-w-96 truncate text-muted-foreground",
+      pdfWidth: 260,
+    },
+    {
+      id: "actions",
+      header: "Acciones",
+      align: "right",
+      exportable: false,
+      cell: (message) => (
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label={`Ver detalle del mensaje de ${message.sender ?? "remitente desconocido"}`}
+          onClick={() => setSelected(message)}
+        >
+          <Eye className="h-4 w-4" aria-hidden="true" />
+        </Button>
+      ),
+    },
+  ];
 
   return (
     <>
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Fecha</TableHead>
-            <TableHead>Categoría</TableHead>
-            <TableHead>Remitente</TableHead>
-            <TableHead>Estado</TableHead>
-            <TableHead>Detalle</TableHead>
-            <TableHead className="text-right">Acciones</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {messages.map((message) => {
-            const estado = estadoDe(message);
-            return (
-              <TableRow key={message.id}>
-                <TableCell className="text-muted-foreground">
-                  {formatFecha(message.received_at)}
-                </TableCell>
-                <TableCell>
-                  <Badge variant="outline">{message.business_category}</Badge>
-                </TableCell>
-                <TableCell className="font-mono text-xs text-muted-foreground">
-                  {message.sender ?? "—"}
-                </TableCell>
-                <TableCell>
-                  <Badge variant={estadoVariant(estado)}>{estado}</Badge>
-                </TableCell>
-                <TableCell
-                  className="max-w-96 truncate text-muted-foreground"
-                  title={resumenDetalle(message)}
-                >
-                  {resumenDetalle(message)}
-                </TableCell>
-                <TableCell className="text-right">
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    aria-label={`Ver detalle del mensaje de ${message.sender ?? "remitente desconocido"}`}
-                    onClick={() => setSelected(message)}
-                  >
-                    <Eye className="h-4 w-4" aria-hidden="true" />
-                  </Button>
-                </TableCell>
-              </TableRow>
-            );
-          })}
-        </TableBody>
-      </Table>
+      <DataTable
+        columns={columns}
+        rows={messages}
+        getRowKey={(message) => message.id}
+        emptyMessage={
+          emptyMessage ??
+          'No hay mensajes de negocio todavía. Van a aparecer acá cuando una regla con acción "Ejecutar script Python" devuelva datos estructurados.'
+        }
+        exportConfig={{ title: "Resultados", filename: "resultados" }}
+        defaultSort={{ columnId: "received_at", direction: "desc" }}
+        pagination={{ pageSize: 10 }}
+      />
       <BusinessMessageDetailDialog
         message={selected}
         onOpenChange={(open) => {

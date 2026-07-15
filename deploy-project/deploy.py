@@ -214,7 +214,7 @@ def generated_secret(key: str) -> str:
 def import_existing_values() -> dict[str, str]:
     imported: dict[str, str] = {}
     connector_env = parse_env(ROOT_DIR / "whatsapp-connector" / ".env")
-    backend_env = parse_env(ROOT_DIR / "whatsaap-backend" / ".env")
+    backend_env = parse_env(ROOT_DIR / "whatsaap_backend" / ".env")
 
     api_key = first_api_key(connector_env.get("API_KEYS")) or first_api_key(backend_env.get("API_KEYS"))
     if api_key:

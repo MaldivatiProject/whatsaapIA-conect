@@ -175,7 +175,11 @@ class RuleActionSchema(BaseModel):
 
     @classmethod
     def from_domain(cls, action: RuleAction) -> RuleActionSchema:
-        return cls(type=action.type, params=action.params)
+        # model_construct bypasses validate_run_script deliberately: this reserializes
+        # data already accepted and stored (via RuleCreate/RuleUpdate) for output. A
+        # rule must stay readable even if a later, stricter validator would now reject
+        # its script on write — validation belongs on the write path, not on every read.
+        return cls.model_construct(type=action.type, params=action.params)
 
 
 class RuleCreate(BaseModel):
@@ -221,7 +225,11 @@ class RuleOut(BaseModel):
 
     @classmethod
     def from_domain(cls, rule: BusinessRule) -> RuleOut:
-        return cls(
+        # model_construct: same reasoning as RuleActionSchema.from_domain — pydantic
+        # revalidates nested model fields (actions) on a normal __init__ even when
+        # given already-constructed instances, which would re-trigger
+        # validate_run_script on read. This reserializes already-stored data.
+        return cls.model_construct(
             id=rule.uuid,
             tenant_id=rule.tenant_id,
             name=rule.name,

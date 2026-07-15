@@ -3,8 +3,14 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from whatsaap_backend.domain.models import ActionType
-from whatsaap_backend.presentation.api.schemas import RuleActionSchema
+from whatsaap_backend.domain.models import (
+    ActionType,
+    BusinessRule,
+    Condition,
+    ConditionOperator,
+    RuleAction,
+)
+from whatsaap_backend.presentation.api.schemas import RuleActionSchema, RuleOut
 
 _VALID_SCRIPT = """
 def handle(message):
@@ -87,3 +93,34 @@ def test_script_rejects_invalid_secret_name(bad_name: str) -> None:
 def test_script_rejects_non_list_secrets() -> None:
     with pytest.raises(ValidationError, match="params.secrets must be a list of strings"):
         _run_script(_VALID_SCRIPT, secrets="STRIPE_API_KEY")  # type: ignore[arg-type]
+
+
+def test_from_domain_does_not_reject_a_previously_stored_script() -> None:
+    """A rule already persisted must stay readable even if a later, stricter
+    validate_run_script would now reject its script on write — validation
+    belongs on the write path (RuleCreate/RuleUpdate), never on read."""
+    action = RuleAction(
+        type=ActionType.RUN_SCRIPT,
+        params={"script": 'def handle(message):\n    token = "ghp_thisWouldFailOnWrite123456"\n    return {}'},
+    )
+    schema = RuleActionSchema.from_domain(action)
+    assert schema.params["script"] == action.params["script"]
+
+
+def test_rule_out_from_domain_does_not_reject_a_previously_stored_rule() -> None:
+    """Reproduces the real regression: GET /api/v1/rules must keep returning a
+    rule whose RUN_SCRIPT action was stored before validate_run_script became
+    stricter, instead of 500ing the entire list for every tenant."""
+    rule = BusinessRule(
+        tenant_id="t1",
+        name="Traslado con script",
+        conditions=(Condition(field="sender", operator=ConditionOperator.EQUALS, value="x"),),
+        actions=(
+            RuleAction(
+                type=ActionType.RUN_SCRIPT,
+                params={"script": 'def handle(message):\n    token = "ghp_thisWouldFailOnWrite123456"\n    return {}'},
+            ),
+        ),
+    )
+    out = RuleOut.from_domain(rule)
+    assert out.actions[0].params["script"] == rule.actions[0].params["script"]

@@ -11,10 +11,11 @@ from whatsaap_backend.domain.models import (
     BusinessMessage,
     BusinessRule,
     ContactIdentity,
+    DriveIntegrationConfig,
     SecretMetadata,
 )
 
-from .contracts import OutboxDraft, ScriptRunResult
+from .contracts import DriveFileContent, OutboxDraft, ScriptRunResult
 
 
 class RuleRepository(Protocol):
@@ -191,6 +192,28 @@ class SecretsRepository(Protocol):
     async def delete(self, tenant_id: str, name: str) -> bool: ...
 
 
+class DriveIntegrationRepository(Protocol):
+    """One row per tenant: which Drive file to read and which secret holds
+    the service-account credential. See SecretsRepository for the credential
+    itself — this repository never touches its value."""
+
+    async def get(self, tenant_id: str) -> DriveIntegrationConfig | None: ...
+
+    async def upsert(self, config: DriveIntegrationConfig) -> DriveIntegrationConfig: ...
+
+    async def delete(self, tenant_id: str) -> bool: ...
+
+
+class DriveDocumentPort(Protocol):
+    """Reads a single Google Drive file's text content using a service-account
+    credential resolved by the caller (see SecretsRepository.get_value) —
+    this port never touches tenant/DB state itself, only the Drive API."""
+
+    async def read_file(
+        self, *, file_id: str, service_account_json: str, cache_ttl_seconds: int
+    ) -> DriveFileContent: ...
+
+
 class MessageSenderPort(Protocol):
     """Delivers a text reply through whatsapp-connector. Phase 1: direct HTTP,
     no RabbitMQ hop — see application/direct_delivery_service.py."""
@@ -237,6 +260,7 @@ class AutomationUnitOfWork(Protocol):
     reports: ReportRepository
     outbox: OutboxRepository
     secrets: SecretsRepository
+    drive_integration: DriveIntegrationRepository
 
     async def __aenter__(self) -> Self: ...
 

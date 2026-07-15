@@ -11,6 +11,7 @@ from whatsaap_backend.application.ports import (
     BusinessMessageRepository,
     ContactIdentityRepository,
     ConversationRepository,
+    DriveIntegrationRepository,
     ExecutionRepository,
     InboxRepository,
     OutboxRepository,
@@ -23,6 +24,7 @@ from .repositories import (
     SqlAlchemyBusinessMessageRepository,
     SqlAlchemyContactIdentityRepository,
     SqlAlchemyConversationRepository,
+    SqlAlchemyDriveIntegrationRepository,
     SqlAlchemyExecutionRepository,
     SqlAlchemyInboxRepository,
     SqlAlchemyOutboxRepository,
@@ -50,6 +52,7 @@ class SqlAlchemyUnitOfWork:
     reports: ReportRepository
     outbox: OutboxRepository
     secrets: SecretsRepository
+    drive_integration: DriveIntegrationRepository
 
     def __init__(
         self, factory: async_sessionmaker[AsyncSession], secrets_encryption_key: str
@@ -69,6 +72,7 @@ class SqlAlchemyUnitOfWork:
         self.reports = SqlAlchemyReportRepository(self._session)
         self.outbox = SqlAlchemyOutboxRepository(self._session)
         self.secrets = SqlAlchemySecretsRepository(self._session, self._secrets_encryption_key)
+        self.drive_integration = SqlAlchemyDriveIntegrationRepository(self._session)
         return self
 
     async def __aexit__(

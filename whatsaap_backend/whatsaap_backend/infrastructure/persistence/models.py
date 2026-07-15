@@ -342,3 +342,38 @@ class SecretModel(StandardColumns, Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class DriveIntegrationConfigModel(StandardColumns, Base):
+    """One active row per tenant. Holds no credential — see SecretModel,
+    referenced here only by name (credentials_secret_name)."""
+
+    __tablename__ = "drive_integration_configs"
+    __table_args__ = (
+        UniqueConstraint(
+            "uuid_drive_integration_configs", name="uk_drive_integration_configs_uuid"
+        ),
+        Index("idx_drive_integration_configs_uuid", "uuid_drive_integration_configs"),
+        Index(
+            "uk_drive_integration_configs_tenant_active",
+            "tenant_id",
+            unique=True,
+            postgresql_where=text("expiration_date IS NULL"),
+        ),
+        {"schema": SCHEMA},
+    )
+
+    pkid_drive_integration_configs: Mapped[int] = mapped_column(
+        BigInteger, Identity(always=True), primary_key=True
+    )
+    uuid_drive_integration_configs: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), nullable=False, server_default=func.gen_random_uuid()
+    )
+    tenant_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    file_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    credentials_secret_name: Mapped[str] = mapped_column(String(128), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    cache_ttl_seconds: Mapped[int] = mapped_column(Integer, nullable=False, default=300)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )

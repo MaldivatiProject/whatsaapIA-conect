@@ -15,6 +15,9 @@ from whatsaap_backend.application.direct_delivery_service import ProcessIncoming
 from whatsaap_backend.application.services import IngestWebhookService
 from whatsaap_backend.config import Settings, get_settings
 from whatsaap_backend.infrastructure.integrations.connector_client import HttpConnectorMessageSender
+from whatsaap_backend.infrastructure.integrations.google_drive_client import (
+    GoogleDriveDocumentClient,
+)
 from whatsaap_backend.infrastructure.persistence.database import (
     create_engine,
     create_session_factory,
@@ -32,6 +35,7 @@ from whatsaap_backend.presentation.api.contact_identities_router import (
 from whatsaap_backend.presentation.api.errors import register_exception_handlers
 from whatsaap_backend.presentation.api.executions_router import router as executions_router
 from whatsaap_backend.presentation.api.health_router import router as health_router
+from whatsaap_backend.presentation.api.integrations_router import router as integrations_router
 from whatsaap_backend.presentation.api.overview_router import router as overview_router
 from whatsaap_backend.presentation.api.reports_router import router as reports_router
 from whatsaap_backend.presentation.api.rules_router import router as rules_router
@@ -83,6 +87,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         timeout_seconds=settings.CONNECTOR_TIMEOUT_SECONDS,
     )
     script_sandbox = SubprocessScriptSandbox(settings)
+    drive_document_client = GoogleDriveDocumentClient()
     direct_delivery_service = ProcessIncomingMessageDirectService(
         uow_factory, message_sender, script_sandbox=script_sandbox
     )
@@ -93,6 +98,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.uow_factory = uow_factory
     app.state.message_sender = message_sender
     app.state.script_sandbox = script_sandbox
+    app.state.drive_document_client = drive_document_client
     app.state.direct_delivery_service = direct_delivery_service
     app.state.webhook_ingest_service = webhook_ingest_service
 
@@ -108,6 +114,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(contact_identities_router)
     app.include_router(rules_router)
     app.include_router(secrets_router)
+    app.include_router(integrations_router)
     app.include_router(executions_router)
     app.include_router(overview_router)
     app.include_router(reports_router)

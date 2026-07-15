@@ -22,6 +22,7 @@ from whatsaap_backend.domain.models import (
     Condition,
     ConditionOperator,
     ContactIdentity,
+    DriveIntegrationConfig,
     RuleAction,
     SecretMetadata,
 )
@@ -32,6 +33,7 @@ from .models import (
     BusinessRuleModel,
     ContactIdentityModel,
     ConversationStateModel,
+    DriveIntegrationConfigModel,
     InboxMessageModel,
     OutboxMessageModel,
     RuleExecutionModel,
@@ -1567,6 +1569,71 @@ class SqlAlchemySecretsRepository:
                 SecretModel.tenant_id == tenant_id,
                 SecretModel.name == name,
                 SecretModel.expiration_date.is_(None),
+            )
+            .values(expiration_date=datetime.now(UTC))
+        )
+        return _rowcount(result) > 0
+
+
+class SqlAlchemyDriveIntegrationRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    @staticmethod
+    def _to_domain(model: DriveIntegrationConfigModel) -> DriveIntegrationConfig:
+        return DriveIntegrationConfig(
+            uuid=model.uuid_drive_integration_configs,
+            tenant_id=model.tenant_id,
+            file_id=model.file_id,
+            credentials_secret_name=model.credentials_secret_name,
+            enabled=model.enabled,
+            cache_ttl_seconds=model.cache_ttl_seconds,
+            creation_date=model.creation_date,
+            updated_at=model.updated_at,
+        )
+
+    async def get(self, tenant_id: str) -> DriveIntegrationConfig | None:
+        model = await self._session.scalar(
+            select(DriveIntegrationConfigModel).where(
+                DriveIntegrationConfigModel.tenant_id == tenant_id,
+                DriveIntegrationConfigModel.expiration_date.is_(None),
+            )
+        )
+        return self._to_domain(model) if model else None
+
+    async def upsert(self, config: DriveIntegrationConfig) -> DriveIntegrationConfig:
+        existing = await self._session.scalar(
+            select(DriveIntegrationConfigModel).where(
+                DriveIntegrationConfigModel.tenant_id == config.tenant_id,
+                DriveIntegrationConfigModel.expiration_date.is_(None),
+            )
+        )
+        if existing is not None:
+            existing.file_id = config.file_id
+            existing.credentials_secret_name = config.credentials_secret_name
+            existing.enabled = config.enabled
+            existing.cache_ttl_seconds = config.cache_ttl_seconds
+            existing.updated_at = datetime.now(UTC)
+            await self._session.flush()
+            return self._to_domain(existing)
+
+        model = DriveIntegrationConfigModel(
+            tenant_id=config.tenant_id,
+            file_id=config.file_id,
+            credentials_secret_name=config.credentials_secret_name,
+            enabled=config.enabled,
+            cache_ttl_seconds=config.cache_ttl_seconds,
+        )
+        self._session.add(model)
+        await self._session.flush()
+        return self._to_domain(model)
+
+    async def delete(self, tenant_id: str) -> bool:
+        result = await self._session.execute(
+            update(DriveIntegrationConfigModel)
+            .where(
+                DriveIntegrationConfigModel.tenant_id == tenant_id,
+                DriveIntegrationConfigModel.expiration_date.is_(None),
             )
             .values(expiration_date=datetime.now(UTC))
         )

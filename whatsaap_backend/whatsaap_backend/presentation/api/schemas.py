@@ -10,6 +10,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from whatsaap_backend.application.contracts import DriveFileContent
 from whatsaap_backend.config import get_settings
 from whatsaap_backend.domain.models import (
     ActionType,
@@ -18,6 +19,7 @@ from whatsaap_backend.domain.models import (
     Condition,
     ConditionOperator,
     ContactIdentity,
+    DriveIntegrationConfig,
     RuleAction,
     SecretMetadata,
 )
@@ -394,6 +396,74 @@ class SecretOut(BaseModel):
             created_at=secret.creation_date,
             rotated_at=secret.rotated_at,
         )
+
+
+class DriveIntegrationConfigIn(BaseModel):
+    """The credential itself is set separately through POST/PATCH
+    /api/v1/secrets/{name} — this endpoint only ever handles non-secret
+    pointer/settings fields."""
+
+    file_id: str = Field(min_length=10, max_length=128)
+    credentials_secret_name: str = Field(default="GOOGLE_DRIVE_SERVICE_ACCOUNT", max_length=128)
+    enabled: bool = True
+    cache_ttl_seconds: int = Field(default=300, ge=30, le=3600)
+
+    @field_validator("credentials_secret_name")
+    @classmethod
+    def validate_credentials_secret_name(cls, value: str) -> str:
+        if not _SECRET_NAME_PATTERN.match(value):
+            raise ValueError(
+                "credentials_secret_name must be UPPER_SNAKE_CASE, "
+                "e.g. GOOGLE_DRIVE_SERVICE_ACCOUNT"
+            )
+        return value
+
+
+class DriveIntegrationConfigOut(BaseModel):
+    tenant_id: str
+    file_id: str
+    credentials_secret_name: str
+    enabled: bool
+    cache_ttl_seconds: int
+    updated_at: datetime
+    has_credentials: bool
+
+    @classmethod
+    def from_domain(
+        cls, config: DriveIntegrationConfig, *, has_credentials: bool
+    ) -> DriveIntegrationConfigOut:
+        return cls(
+            tenant_id=config.tenant_id,
+            file_id=config.file_id,
+            credentials_secret_name=config.credentials_secret_name,
+            enabled=config.enabled,
+            cache_ttl_seconds=config.cache_ttl_seconds,
+            updated_at=config.updated_at,
+            has_credentials=has_credentials,
+        )
+
+
+class DriveConnectionTestResult(BaseModel):
+    ok: bool
+    name: str | None = None
+    mime_type: str | None = None
+    modified_time: datetime | None = None
+    preview: str | None = None
+    error: str | None = None
+
+    @classmethod
+    def from_content(cls, content: DriveFileContent) -> DriveConnectionTestResult:
+        return cls(
+            ok=True,
+            name=content.name,
+            mime_type=content.mime_type,
+            modified_time=content.modified_time,
+            preview=content.text[:280],
+        )
+
+    @classmethod
+    def from_error(cls, detail: str) -> DriveConnectionTestResult:
+        return cls(ok=False, error=detail)
 
 
 class ReportSummaryOut(BaseModel):

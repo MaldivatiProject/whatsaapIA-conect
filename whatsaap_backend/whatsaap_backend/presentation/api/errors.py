@@ -60,6 +60,25 @@ class SecretAlreadyExistsError(ProblemDetailsError):
         )
 
 
+class DriveIntegrationNotConfiguredError(ProblemDetailsError):
+    def __init__(self) -> None:
+        super().__init__(
+            status.HTTP_404_NOT_FOUND,
+            "DriveIntegrationNotConfiguredError",
+            "No Google Drive integration is configured for this tenant",
+        )
+
+
+class DriveCredentialsMissingError(ProblemDetailsError):
+    def __init__(self, secret_name: str) -> None:
+        super().__init__(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "DriveCredentialsMissingError",
+            f"No secret named '{secret_name}' is stored for this tenant; "
+            "set the service-account credential via POST /api/v1/secrets first",
+        )
+
+
 def _problem_response(request: Request, status_code: int, title: str, detail: str) -> JSONResponse:
     correlation_id = getattr(request.state, "correlation_id", None) or str(uuid4())
     body = {

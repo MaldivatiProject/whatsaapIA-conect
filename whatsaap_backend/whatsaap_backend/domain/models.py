@@ -157,6 +157,23 @@ class SecretMetadata:
 
 
 @dataclass(frozen=True, slots=True)
+class DriveIntegrationConfig:
+    """Per-tenant pointer to a single Google Drive file the backend may read.
+    Holds no credential — the service-account JSON lives in `secrets`
+    (see SecretMetadata) under `credentials_secret_name`, so this row is safe
+    to return to the dashboard as-is."""
+
+    tenant_id: str
+    file_id: str
+    uuid: UUID = field(default_factory=uuid4)
+    credentials_secret_name: str = "GOOGLE_DRIVE_SERVICE_ACCOUNT"  # noqa: S105 — a secret *name*, not a value
+    enabled: bool = True
+    cache_ttl_seconds: int = 300
+    creation_date: datetime = field(default_factory=lambda: datetime.now(UTC))
+    updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+
+@dataclass(frozen=True, slots=True)
 class RuleMatch:
     rule_id: UUID
     rule_version: int

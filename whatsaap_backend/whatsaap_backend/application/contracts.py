@@ -76,6 +76,20 @@ class ScriptRunResult:
     error: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class DriveFileContent:
+    """A Google Drive file's text content plus enough metadata to detect
+    changes (modified_time) and cache safely. Google Workspace files
+    (Docs/Sheets) are exported to text/csv before reaching here — see
+    infrastructure/integrations/google_drive_client."""
+
+    file_id: str
+    name: str
+    mime_type: str
+    modified_time: datetime
+    text: str
+
+
 class ScriptSandboxUnavailableError(RuntimeError):
     """Raised when the sandbox's isolation guarantees could not be verified.
 

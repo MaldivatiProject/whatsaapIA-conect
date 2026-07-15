@@ -2,7 +2,7 @@ name: ${COMPOSE_PROJECT_NAME:-whatsaapia-platform}
 
 x-backend: &backend
   build:
-    context: ../whatsaap-backend
+    context: ../whatsaap_backend
     dockerfile: Dockerfile
   image: whatsaap-backend:0.1.0
   restart: unless-stopped
@@ -113,7 +113,7 @@ services:
       - -cleanDisabled=true
       - migrate
     volumes:
-      - ../whatsaap-backend/db/migration:/flyway/sql:ro
+      - ../whatsaap_backend/db/migration:/flyway/sql:ro
     networks:
       - whatsapp-platform
     depends_on:

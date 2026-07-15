@@ -13,6 +13,7 @@ import {
   Menu,
   MessageCircle,
   MessagesSquare,
+  Plug,
   Radio,
   Smartphone,
 } from "lucide-react";
@@ -38,6 +39,7 @@ const ROUTE_LABELS: Record<string, string> = {
   "/reports": "Reportes",
   "/business-messages": "Resultados",
   "/activity": "Actividad",
+  "/integrations": "Integraciones",
 };
 
 const NAV_ITEMS = [
@@ -48,6 +50,7 @@ const NAV_ITEMS = [
   { href: "/reports", label: "Reportes", icon: BarChart3 },
   { href: "/business-messages", label: "Resultados", icon: ClipboardCheck },
   { href: "/activity", label: "Actividad", icon: Radio },
+  { href: "/integrations", label: "Integraciones", icon: Plug },
 ] as const;
 
 function routeLabel(pathname: string) {
@@ -78,7 +81,10 @@ function DashboardBreadcrumb({ pathname }: { pathname: string }) {
                 Inicio
               </Link>
             </li>
-            <li className="hidden text-muted-foreground sm:flex" aria-hidden="true">
+            <li
+              className="hidden text-muted-foreground sm:flex"
+              aria-hidden="true"
+            >
               <ChevronRight className="h-4 w-4" />
             </li>
           </>
@@ -95,9 +101,18 @@ function DashboardBreadcrumb({ pathname }: { pathname: string }) {
   );
 }
 
-function NavLinks({ pathname, onNavigate }: { pathname: string; onNavigate?: () => void }) {
+function NavLinks({
+  pathname,
+  onNavigate,
+}: {
+  pathname: string;
+  onNavigate?: () => void;
+}) {
   return (
-    <nav aria-label="Navegación principal" className="flex flex-1 flex-col gap-1">
+    <nav
+      aria-label="Navegación principal"
+      className="flex flex-1 flex-col gap-1"
+    >
       {NAV_ITEMS.map(({ href, label, icon: Icon }) => {
         const isActive = pathname === href;
         return (
@@ -155,20 +170,36 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
       <aside className="hidden w-60 shrink-0 border-r bg-muted/30 p-4 sm:flex sm:flex-col sm:gap-6">
         <BrandMark />
         <NavLinks pathname={pathname} />
-        <Button variant="outline" size="sm" onClick={handleLogout} className="justify-start gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleLogout}
+          className="justify-start gap-2"
+        >
           <LogOut className="h-4 w-4" aria-hidden="true" />
           Cerrar sesión
         </Button>
       </aside>
 
       <Sheet open={mobileNavOpen} onOpenChange={setMobileNavOpen}>
-        <SheetContent side="left" className="flex w-64 flex-col gap-6 p-4 sm:hidden">
+        <SheetContent
+          side="left"
+          className="flex w-64 flex-col gap-6 p-4 sm:hidden"
+        >
           <SheetHeader className="p-0">
             <SheetTitle className="sr-only">Navegación</SheetTitle>
             <BrandMark />
           </SheetHeader>
-          <NavLinks pathname={pathname} onNavigate={() => setMobileNavOpen(false)} />
-          <Button variant="outline" size="sm" onClick={handleLogout} className="justify-start gap-2">
+          <NavLinks
+            pathname={pathname}
+            onNavigate={() => setMobileNavOpen(false)}
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleLogout}
+            className="justify-start gap-2"
+          >
             <LogOut className="h-4 w-4" aria-hidden="true" />
             Cerrar sesión
           </Button>
@@ -187,12 +218,16 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
               >
                 <Menu className="h-5 w-5" aria-hidden="true" />
               </Button>
-              <span className="font-heading text-sm font-bold tracking-tight">Helpdesk</span>
+              <span className="font-heading text-sm font-bold tracking-tight">
+                Helpdesk
+              </span>
             </div>
             <DashboardBreadcrumb pathname={pathname} />
           </div>
           <div className="ml-auto flex shrink-0 items-center gap-2">
-            <span className="text-sm text-muted-foreground">Eventos en vivo</span>
+            <span className="text-sm text-muted-foreground">
+              Eventos en vivo
+            </span>
             <Badge variant={connected ? "success" : "destructive"}>
               {connected ? "Conectado" : "Desconectado"}
             </Badge>

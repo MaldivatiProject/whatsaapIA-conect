@@ -11,6 +11,7 @@ from uuid import UUID, uuid4
 
 import structlog
 
+from whatsaap_backend.config import Settings, get_settings
 from whatsaap_backend.domain.models import (
     ActionType,
     BusinessMessage,
@@ -18,11 +19,20 @@ from whatsaap_backend.domain.models import (
     BusinessMessageStatus,
     BusinessRule,
     IncomingMessage,
+    MessageAttachment,
     RuleAction,
     RuleMatch,
 )
 from whatsaap_backend.domain.rule_engine import RuleEvaluator, render_template
 
+from .bulk_csv import (
+    CsvParseError,
+    TrasladoCsvParseResult,
+    build_traslado_text,
+    format_bulk_summary,
+    is_csv_attachment,
+    parse_traslado_csv,
+)
 from .contracts import (
     MessageEnvelope,
     OutboxDraft,
@@ -202,10 +212,12 @@ class ProcessIncomingMessageService:
         uow_factory: UnitOfWorkFactory,
         evaluator: RuleEvaluator | None = None,
         script_sandbox: ScriptSandboxPort | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._evaluator = evaluator or RuleEvaluator()
         self._script_sandbox = script_sandbox
+        self._settings = settings or get_settings()
 
     async def _enqueue_send(
         self,
@@ -313,6 +325,124 @@ class ProcessIncomingMessageService:
             return 1
         return 0
 
+    async def _run_bulk_traslado_action(
+        self,
+        uow: Any,
+        *,
+        execution_id: UUID,
+        correlation_id: str,
+        message: IncomingMessage,
+        match: RuleMatch,
+        action: RuleAction,
+        rule: BusinessRule | None,
+        parse_result: TrasladoCsvParseResult,
+    ) -> int:
+        """Runs the matched RUN_SCRIPT once per CSV row, sequentially — reusing
+        the exact same script/secrets a single-message "TRASLADO TIENDA" would,
+        via a synthetic per-row message built from build_traslado_text(). The
+        script itself needs zero changes to support bulk uploads.
+
+        Sequential on purpose: uow wraps one SQLAlchemy AsyncSession, which
+        isn't safe for concurrent use from multiple coroutines — running rows
+        in parallel would need to serialize every uow write behind a lock
+        anyway, for no real benefit at the row counts MAX_CSV_ROWS_PER_UPLOAD
+        allows. Sends one consolidated summary instead of a per-row reply.
+        """
+        if self._script_sandbox is None:
+            logger.error("script_sandbox_not_configured", rule_id=str(match.rule_id))
+            await self._enqueue_send(
+                uow,
+                execution_id=execution_id,
+                correlation_id=correlation_id,
+                message=message,
+                text="No pude procesar el archivo: el sandbox de scripts no está disponible.",
+            )
+            return 1
+
+        try:
+            secrets = await resolve_action_secrets(uow, message.tenant_id, action)
+        except SecretResolutionError as error:
+            logger.error(
+                "script_secret_missing", rule_id=str(match.rule_id), secret_name=error.name
+            )
+            await self._enqueue_send(
+                uow,
+                execution_id=execution_id,
+                correlation_id=correlation_id,
+                message=message,
+                text=f"No pude procesar el archivo: falta el secreto {error.name}.",
+            )
+            return 1
+
+        script_source = str(action.params.get("script", ""))
+        successes: list[str] = []
+        failures: list[str] = []
+
+        for row in parse_result.rows:
+            row_message = replace(
+                message,
+                text=build_traslado_text(row),
+                message_id=f"{message.message_id}:row-{row.index}",
+            )
+            try:
+                result = await self._script_sandbox.run(
+                    script_source=script_source,
+                    input_payload=build_script_input(row_message, rule),
+                    secrets=secrets,
+                )
+            except ScriptSandboxUnavailableError:
+                logger.error(
+                    "script_sandbox_unavailable", rule_id=str(match.rule_id), row=row.index
+                )
+                failures.append(f"Fila {row.index} ({row.correo}): sandbox no disponible")
+                continue
+
+            if not result.ok:
+                logger.warning(
+                    "bulk_row_failed", rule_id=str(match.rule_id), row=row.index, error=result.error
+                )
+                error_detail = result.error or "error desconocido"
+                failures.append(f"Fila {row.index} ({row.correo}): {error_detail}")
+                continue
+
+            if result.business_data is not None:
+                await uow.business_messages.add(
+                    BusinessMessage(
+                        tenant_id=message.tenant_id,
+                        source_origin=BusinessMessageOrigin.WHATSAPP,
+                        business_category=rule.category if rule else "general",
+                        metadata=result.business_data,
+                        session_id=message.session_id,
+                        conversation_id=message.conversation_id,
+                        message_id=row_message.message_id,
+                        raw_sender=message.raw_sender or message.sender,
+                        sender=message.sender,
+                        reply_to_jid=message.resolved_reply_to_jid,
+                        raw_text_hash=hashlib.sha256(row_message.text.encode("utf-8")).hexdigest(),
+                        processing_status=BusinessMessageStatus.PARSED,
+                        created_by=f"rule:{match.rule_id}",
+                    )
+                )
+
+            # Coupled to the "Traslado de tienda" script's own business_data
+            # contract (resultado in {GUARDADO, YA_CORRECTA} = success) — bulk
+            # mode exists specifically to fan that one script out per row.
+            resultado = str((result.business_data or {}).get("resultado", ""))
+            if resultado in {"GUARDADO", "YA_CORRECTA"}:
+                successes.append(f"Fila {row.index} ({row.correo})")
+            else:
+                failures.append(f"Fila {row.index} ({row.correo}): {resultado or 'sin resultado'}")
+
+        summary = format_bulk_summary(successes, failures, parse_result.skipped)
+        await self._enqueue_send(
+            uow,
+            execution_id=execution_id,
+            correlation_id=correlation_id,
+            message=message,
+            text=summary,
+        )
+        return 1
+
     async def execute(self, message: IncomingMessage, correlation_id: str) -> ProcessMessageResult:
         execution_id = uuid4()
         async with self._uow_factory() as uow:
@@ -343,6 +473,9 @@ class ProcessIncomingMessageService:
             next_state = dict(state)
             template_context = message_template_context(message)
             script_actions: list[tuple[RuleMatch, RuleAction, BusinessRule | None]] = []
+            bulk_actions: list[
+                tuple[RuleMatch, RuleAction, BusinessRule | None, TrasladoCsvParseResult]
+            ] = []
 
             # Pass 1 — fast actions only (SEND_TEXT/SET_STATE/NOOP) plus, for
             # RUN_SCRIPT matches, an immediate "processing" ack. The actual
@@ -373,6 +506,41 @@ class ProcessIncomingMessageService:
                         action_count += 1
                     elif action.type is ActionType.RUN_SCRIPT:
                         rule = rule_lookup.get(str(match.rule_id))
+                        attachment = message.attachment
+
+                        if attachment is not None and is_csv_attachment(attachment):
+                            try:
+                                parse_result = parse_traslado_csv(
+                                    attachment,
+                                    max_rows=self._settings.MAX_CSV_ROWS_PER_UPLOAD,
+                                )
+                            except CsvParseError as error:
+                                await self._enqueue_send(
+                                    uow,
+                                    execution_id=execution_id,
+                                    correlation_id=correlation_id,
+                                    message=message,
+                                    text=f"No pude procesar tu archivo: {error}",
+                                )
+                                command_count += 1
+                                action_count += 1
+                                continue
+                            await self._enqueue_send(
+                                uow,
+                                execution_id=execution_id,
+                                correlation_id=correlation_id,
+                                message=message,
+                                text=(
+                                    f"Recibimos tu archivo con {len(parse_result.rows)} "
+                                    "traslado(s) de tienda. Te confirmamos con un resumen "
+                                    "cuando terminen todos."
+                                ),
+                            )
+                            command_count += 1
+                            bulk_actions.append((match, action, rule, parse_result))
+                            action_count += 1
+                            continue
+
                         ack_text_raw = str(action.params.get("ack_text") or "").strip()
                         if ack_text_raw.lower() != "off":
                             ack_context = {
@@ -442,7 +610,20 @@ class ProcessIncomingMessageService:
                     rule=rule,
                 )
 
-            if script_actions:
+            # Same pass, same reasoning — bulk CSV traslados run after the ack too.
+            for match, action, rule, parse_result in bulk_actions:
+                command_count += await self._run_bulk_traslado_action(
+                    uow,
+                    execution_id=execution_id,
+                    correlation_id=correlation_id,
+                    message=message,
+                    match=match,
+                    action=action,
+                    rule=rule,
+                    parse_result=parse_result,
+                )
+
+            if script_actions or bulk_actions:
                 await uow.executions.update_status(
                     tenant_id=message.tenant_id,
                     execution_id=execution_id,
@@ -540,4 +721,5 @@ def incoming_message_from_envelope(data: dict[str, Any]) -> IncomingMessage:
         is_group=is_group,
         push_name=str(payload.get("pushName") or payload.get("push_name") or ""),
         raw_payload=payload,
+        attachment=MessageAttachment.from_payload(payload.get("attachment")),
     )

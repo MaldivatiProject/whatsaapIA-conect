@@ -204,6 +204,18 @@ class DriveIntegrationRepository(Protocol):
     async def delete(self, tenant_id: str) -> bool: ...
 
 
+class SecuritySettingsRepository(Protocol):
+    """Platform-wide (not per-tenant) runtime security toggles — a singleton
+    row, editable from the dashboard. See infrastructure.security_settings
+    for the in-process cache the RuleActionSchema validator actually reads."""
+
+    async def get_allow_hardcoded_script_secrets(self) -> bool: ...
+
+    async def set_allow_hardcoded_script_secrets(
+        self, value: bool, *, updated_by: str | None
+    ) -> None: ...
+
+
 class DriveDocumentPort(Protocol):
     """Reads a single Google Drive file's text content using a service-account
     credential resolved by the caller (see SecretsRepository.get_value) —
@@ -261,6 +273,7 @@ class AutomationUnitOfWork(Protocol):
     outbox: OutboxRepository
     secrets: SecretsRepository
     drive_integration: DriveIntegrationRepository
+    security_settings: SecuritySettingsRepository
 
     async def __aenter__(self) -> Self: ...
 

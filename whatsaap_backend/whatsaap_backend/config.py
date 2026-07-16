@@ -81,6 +81,15 @@ class Settings(BaseSettings):
     # can spawn a real headless Chrome process, which costs real memory/CPU.
     WORKER_RULES_MAX_CONCURRENCY: int = Field(default=4, ge=1, le=32)
 
+    # Bulk CSV uploads (e.g. "TRASLADO TIENDA" + attached CSV) fan out into one
+    # RUN_SCRIPT run per row, reusing the same rule's script — this caps how
+    # many headless Chrome runs a single upload can trigger.
+    MAX_CSV_ROWS_PER_UPLOAD: int = Field(default=200, ge=1, le=2000)
+    # Rows within one CSV upload processed concurrently — bounded independently
+    # of WORKER_RULES_MAX_CONCURRENCY (which caps concurrent *messages*) so one
+    # large upload can't alone saturate the sandbox's process/Chrome budget.
+    BULK_CSV_ROW_CONCURRENCY: int = Field(default=3, ge=1, le=10)
+
     @field_validator("DATABASE_SCHEMA")
     @classmethod
     def validate_schema(cls, value: str) -> str:

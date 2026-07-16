@@ -38,6 +38,7 @@ from .models import (
     OutboxMessageModel,
     RuleExecutionModel,
     SecretModel,
+    SecuritySettingsModel,
 )
 
 # pgcrypto lives in `automation_schema` (see db/migration/V1), not `public`,
@@ -1638,3 +1639,36 @@ class SqlAlchemyDriveIntegrationRepository:
             .values(expiration_date=datetime.now(UTC))
         )
         return _rowcount(result) > 0
+
+
+class SqlAlchemySecuritySettingsRepository:
+    """Singleton row (see V10__create_security_settings.sql's unique index) —
+    there is always exactly one active row after migration, but get() still
+    defaults safely (check enforced) if it were ever somehow missing."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def _active_row(self) -> SecuritySettingsModel | None:
+        row: SecuritySettingsModel | None = await self._session.scalar(
+            select(SecuritySettingsModel).where(SecuritySettingsModel.expiration_date.is_(None))
+        )
+        return row
+
+    async def get_allow_hardcoded_script_secrets(self) -> bool:
+        row = await self._active_row()
+        return bool(row.allow_hardcoded_script_secrets) if row else False
+
+    async def set_allow_hardcoded_script_secrets(
+        self, value: bool, *, updated_by: str | None
+    ) -> None:
+        row = await self._active_row()
+        if row is not None:
+            row.allow_hardcoded_script_secrets = value
+            row.updated_by = updated_by
+            row.updated_at = datetime.now(UTC)
+        else:
+            self._session.add(
+                SecuritySettingsModel(allow_hardcoded_script_secrets=value, updated_by=updated_by)
+            )
+        await self._session.flush()

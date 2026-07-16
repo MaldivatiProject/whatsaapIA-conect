@@ -10,6 +10,8 @@ export const useMultiFileAuthState = async (): Promise<{ state: Record<string, u
   state: {},
   saveCreds: async () => undefined,
 });
+// Overridable per-test via `(downloadMediaMessage as jest.Mock).mockResolvedValueOnce(...)`.
+export const downloadMediaMessage = jest.fn(async (): Promise<Buffer> => Buffer.from(''));
 export default (): never => {
   throw new Error('Baileys socket must be overridden in tests');
 };

@@ -39,6 +39,7 @@ async def run() -> None:
     service = ProcessIncomingMessageService(
         SqlAlchemyUnitOfWorkFactory(session_factory, settings.SECRETS_ENCRYPTION_KEY),
         script_sandbox=script_sandbox,
+        settings=settings,
     )
     bus = RabbitMQBus(settings.RABBITMQ_URL, settings.RABBITMQ_PREFETCH)
     await bus.connect()

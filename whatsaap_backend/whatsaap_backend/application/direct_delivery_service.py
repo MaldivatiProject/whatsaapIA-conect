@@ -7,21 +7,34 @@ and execution audit are reused as-is — only the SEND_TEXT transport differs.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
+from typing import Any
 from uuid import uuid4
 
 import structlog
 
+from whatsaap_backend.config import Settings, get_settings
 from whatsaap_backend.domain.models import (
     ActionType,
     BusinessMessage,
     BusinessMessageOrigin,
     BusinessMessageStatus,
+    BusinessRule,
     IncomingMessage,
+    MessageAttachment,
+    RuleAction,
+    RuleMatch,
 )
 from whatsaap_backend.domain.rule_engine import RuleEvaluator, render_template
 from whatsaap_backend.infrastructure.integrations.connector_client import ConnectorDeliveryError
 
+from .bulk_csv import (
+    CsvParseError,
+    build_traslado_text,
+    format_bulk_summary,
+    is_csv_attachment,
+    parse_traslado_csv,
+)
 from .contracts import ScriptRunResult, ScriptSandboxUnavailableError, SecretResolutionError
 from .ports import MessageSenderPort, ScriptSandboxPort, UnitOfWorkFactory
 from .services import (
@@ -55,11 +68,143 @@ class ProcessIncomingMessageDirectService:
         sender: MessageSenderPort,
         evaluator: RuleEvaluator | None = None,
         script_sandbox: ScriptSandboxPort | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self._uow_factory = uow_factory
         self._sender = sender
         self._evaluator = evaluator or RuleEvaluator()
         self._script_sandbox = script_sandbox
+        self._settings = settings or get_settings()
+
+    async def _run_bulk_traslado_direct(
+        self,
+        uow: Any,
+        *,
+        message: IncomingMessage,
+        match: RuleMatch,
+        action: RuleAction,
+        rule: BusinessRule | None,
+        attachment: MessageAttachment,
+    ) -> tuple[int, list[str]]:
+        """Direct-delivery counterpart of
+        ProcessIncomingMessageService._run_bulk_traslado_action (services.py) —
+        same reasoning (reuse the matched RUN_SCRIPT once per CSV row, one
+        consolidated summary instead of a per-row reply), adapted to send
+        replies synchronously over HTTP instead of via the outbox.
+
+        Caution: unlike the outbox path, there is no "commit now, run scripts
+        after" split here — the whole webhook HTTP request stays open for as
+        long as every row takes to run. For large uploads under
+        WEBHOOK_PROCESSING_MODE=direct this risks the connector's webhook
+        call timing out mid-batch; WEBHOOK_PROCESSING_MODE=outbox does not
+        have this limitation (Pass 2 runs after the ack is already committed).
+        """
+        sent = 0
+        errors: list[str] = []
+
+        async def _send(text: str) -> None:
+            nonlocal sent
+            try:
+                await self._sender.send_text(
+                    session_id=message.session_id,
+                    to=message.resolved_reply_to_jid,
+                    text=text,
+                    quoted_message_id=message.message_id,
+                )
+                sent += 1
+            except ConnectorDeliveryError as error:
+                logger.error(
+                    "direct_delivery_send_failed",
+                    rule_id=str(match.rule_id),
+                    status_code=error.status_code,
+                )
+                errors.append(f"rule={match.rule_id}: {error.detail}")
+
+        try:
+            parse_result = parse_traslado_csv(
+                attachment, max_rows=self._settings.MAX_CSV_ROWS_PER_UPLOAD
+            )
+        except CsvParseError as error:
+            await _send(f"No pude procesar tu archivo: {error}")
+            return sent, errors
+
+        await _send(
+            f"Recibimos tu archivo con {len(parse_result.rows)} traslado(s) de tienda. "
+            "Te confirmamos con un resumen cuando terminen todos."
+        )
+
+        if self._script_sandbox is None:
+            logger.error("script_sandbox_not_configured", rule_id=str(match.rule_id))
+            await _send("No pude procesar el archivo: el sandbox de scripts no está disponible.")
+            return sent, errors
+
+        try:
+            secrets = await resolve_action_secrets(uow, message.tenant_id, action)
+        except SecretResolutionError as error:
+            logger.error(
+                "script_secret_missing", rule_id=str(match.rule_id), secret_name=error.name
+            )
+            await _send(f"No pude procesar el archivo: falta el secreto {error.name}.")
+            return sent, errors
+
+        script_source = str(action.params.get("script", ""))
+        successes: list[str] = []
+        failures: list[str] = []
+
+        for row in parse_result.rows:
+            row_message = replace(
+                message,
+                text=build_traslado_text(row),
+                message_id=f"{message.message_id}:row-{row.index}",
+            )
+            try:
+                result = await self._script_sandbox.run(
+                    script_source=script_source,
+                    input_payload=build_script_input(row_message, rule),
+                    secrets=secrets,
+                )
+            except ScriptSandboxUnavailableError:
+                logger.error(
+                    "script_sandbox_unavailable", rule_id=str(match.rule_id), row=row.index
+                )
+                failures.append(f"Fila {row.index} ({row.correo}): sandbox no disponible")
+                continue
+
+            if not result.ok:
+                logger.warning(
+                    "bulk_row_failed", rule_id=str(match.rule_id), row=row.index, error=result.error
+                )
+                error_detail = result.error or "error desconocido"
+                failures.append(f"Fila {row.index} ({row.correo}): {error_detail}")
+                continue
+
+            if result.business_data is not None:
+                await uow.business_messages.add(
+                    BusinessMessage(
+                        tenant_id=message.tenant_id,
+                        source_origin=BusinessMessageOrigin.WHATSAPP,
+                        business_category=rule.category if rule else "general",
+                        metadata=result.business_data,
+                        session_id=message.session_id,
+                        conversation_id=message.conversation_id,
+                        message_id=row_message.message_id,
+                        raw_sender=message.raw_sender or message.sender,
+                        sender=message.sender,
+                        reply_to_jid=message.resolved_reply_to_jid,
+                        raw_text_hash=hashlib.sha256(row_message.text.encode("utf-8")).hexdigest(),
+                        processing_status=BusinessMessageStatus.PARSED,
+                        created_by=f"rule:{match.rule_id}",
+                    )
+                )
+
+            resultado = str((result.business_data or {}).get("resultado", ""))
+            if resultado in {"GUARDADO", "YA_CORRECTA"}:
+                successes.append(f"Fila {row.index} ({row.correo})")
+            else:
+                failures.append(f"Fila {row.index} ({row.correo}): {resultado or 'sin resultado'}")
+
+        await _send(format_bulk_summary(successes, failures, parse_result.skipped))
+        return sent, errors
 
     async def execute(self, message: IncomingMessage) -> DirectDeliveryResult:
         execution_id = uuid4()
@@ -121,6 +266,21 @@ class ProcessIncomingMessageDirectService:
                         pass
                     elif action.type is ActionType.RUN_SCRIPT:
                         rule = rule_lookup.get(str(match.rule_id))
+                        attachment = message.attachment
+
+                        if attachment is not None and is_csv_attachment(attachment):
+                            sent, bulk_errors = await self._run_bulk_traslado_direct(
+                                uow,
+                                message=message,
+                                match=match,
+                                action=action,
+                                rule=rule,
+                                attachment=attachment,
+                            )
+                            actions_sent += sent
+                            delivery_errors.extend(bulk_errors)
+                            continue
+
                         ack_text_raw = str(action.params.get("ack_text") or "").strip()
                         if ack_text_raw.lower() != "off":
                             ack_context = {

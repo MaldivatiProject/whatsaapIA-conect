@@ -3,6 +3,7 @@
 import { useRules } from "@/features/rules/hooks/useRules";
 import { RuleFormDialog } from "@/features/rules/components/RuleFormDialog";
 import { RulesTable } from "@/features/rules/components/RulesTable";
+import { SecuritySettingsCard } from "@/features/rules/components/SecuritySettingsCard";
 import { Card } from "@/shared/components/ui/card";
 import { Skeleton } from "@/shared/components/ui/skeleton";
 import { ErrorState } from "@/shared/components/layout/ErrorState";
@@ -22,6 +23,8 @@ export default function RulesPage() {
         </div>
         <RuleFormDialog onCreate={createRule} isCreating={isCreating} />
       </div>
+
+      <SecuritySettingsCard />
 
       {isLoading && <Skeleton className="h-64 w-full" />}
 

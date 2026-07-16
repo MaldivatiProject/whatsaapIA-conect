@@ -14,6 +14,7 @@ from starlette.middleware.cors import CORSMiddleware
 from whatsaap_backend.application.direct_delivery_service import ProcessIncomingMessageDirectService
 from whatsaap_backend.application.services import IngestWebhookService
 from whatsaap_backend.config import Settings, get_settings
+from whatsaap_backend.infrastructure import security_settings
 from whatsaap_backend.infrastructure.integrations.connector_client import HttpConnectorMessageSender
 from whatsaap_backend.infrastructure.integrations.google_drive_client import (
     GoogleDriveDocumentClient,
@@ -40,6 +41,9 @@ from whatsaap_backend.presentation.api.overview_router import router as overview
 from whatsaap_backend.presentation.api.reports_router import router as reports_router
 from whatsaap_backend.presentation.api.rules_router import router as rules_router
 from whatsaap_backend.presentation.api.secrets_router import router as secrets_router
+from whatsaap_backend.presentation.api.security_settings_router import (
+    router as security_settings_router,
+)
 from whatsaap_backend.presentation.api.webhook_router import router as webhook_router
 
 logger = structlog.get_logger(__name__)
@@ -65,6 +69,11 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     verified = await script_sandbox.verify()
     logger.info("script_sandbox_verified", verified=verified)
 
+    async with app.state.uow_factory() as uow:
+        allow = await uow.security_settings.get_allow_hardcoded_script_secrets()
+    security_settings.set_allow_hardcoded_script_secrets(allow)
+    logger.info("security_settings_loaded", allow_hardcoded_script_secrets=allow)
+
     yield
 
     sender: HttpConnectorMessageSender = app.state.message_sender
@@ -89,7 +98,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     script_sandbox = SubprocessScriptSandbox(settings)
     drive_document_client = GoogleDriveDocumentClient()
     direct_delivery_service = ProcessIncomingMessageDirectService(
-        uow_factory, message_sender, script_sandbox=script_sandbox
+        uow_factory, message_sender, script_sandbox=script_sandbox, settings=settings
     )
     webhook_ingest_service = IngestWebhookService(uow_factory)
 
@@ -114,6 +123,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(contact_identities_router)
     app.include_router(rules_router)
     app.include_router(secrets_router)
+    app.include_router(security_settings_router)
     app.include_router(integrations_router)
     app.include_router(executions_router)
     app.include_router(overview_router)

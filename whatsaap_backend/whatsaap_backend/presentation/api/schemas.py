@@ -23,6 +23,7 @@ from whatsaap_backend.domain.models import (
     RuleAction,
     SecretMetadata,
 )
+from whatsaap_backend.infrastructure import security_settings
 
 # Defense-in-depth only: rejects obviously-wrong/accidental uploads early
 # with a clear message. This is trivially bypassable (e.g. string
@@ -52,7 +53,9 @@ _RUN_SCRIPT_DENYLIST = (
 # into the script instead of referencing it by name — RUN_SCRIPT scripts
 # never receive credentials via the sandbox environment (see
 # infrastructure/sandbox/SubprocessScriptSandbox), so a literal secret
-# in the source is always a mistake, not a legitimate use case.
+# in the source is usually a mistake. Can be disabled platform-wide via
+# the security settings toggle (see infrastructure/security_settings.py)
+# for the rare legitimate case of grandfathering an existing script.
 _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"AKIA[0-9A-Z]{16}"), "AWS access key ID"),
     (re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----"), "PEM private key"),
@@ -138,13 +141,14 @@ class RuleActionSchema(BaseModel):
             if pattern in script:
                 raise ValueError(f"script contains a disallowed pattern: {pattern!r}")
 
-        secret_label = _find_hardcoded_secret(script)
-        if secret_label is not None:
-            raise ValueError(
-                f"script appears to contain a hardcoded credential ({secret_label}); "
-                "reference it by name in params.secrets and read it via "
-                "os.environ instead of embedding the literal value"
-            )
+        if not security_settings.get_allow_hardcoded_script_secrets():
+            secret_label = _find_hardcoded_secret(script)
+            if secret_label is not None:
+                raise ValueError(
+                    f"script appears to contain a hardcoded credential ({secret_label}); "
+                    "reference it by name in params.secrets and read it via "
+                    "os.environ instead of embedding the literal value"
+                )
 
         secret_names = self.params.get("secrets")
         if secret_names is not None:
@@ -672,3 +676,11 @@ class BusinessMessageOut(BaseModel):
             received_at=message.received_at,
             created_by=message.created_by,
         )
+
+
+class SecuritySettingsOut(BaseModel):
+    allow_hardcoded_script_secrets: bool
+
+
+class SecuritySettingsUpdate(BaseModel):
+    allow_hardcoded_script_secrets: bool

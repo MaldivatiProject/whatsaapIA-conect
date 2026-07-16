@@ -77,6 +77,37 @@ class BusinessRule:
 
 
 @dataclass(frozen=True, slots=True)
+class MessageAttachment:
+    """A downloaded, base64-encoded inbound document (see whatsapp-connector's
+    downloadCsvAttachment). Only ever CSV-like today — see
+    application.bulk_traslado for the one consumer."""
+
+    mime_type: str
+    base64_content: str
+    file_name: str | None = None
+
+    @classmethod
+    def from_payload(cls, raw: object) -> MessageAttachment | None:
+        """Parses the `attachment` field of a connector webhook/AMQP payload.
+        Malformed or absent input yields None — an inbound message must never
+        fail to process just because its optional attachment looks wrong."""
+        if not isinstance(raw, dict):
+            return None
+        mime_type = raw.get("mimeType")
+        base64_content = raw.get("base64")
+        if not isinstance(mime_type, str):
+            return None
+        if not isinstance(base64_content, str) or not base64_content:
+            return None
+        file_name = raw.get("fileName")
+        return cls(
+            mime_type=mime_type,
+            base64_content=base64_content,
+            file_name=file_name if isinstance(file_name, str) else None,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class IncomingMessage:
     message_id: str
     tenant_id: str
@@ -94,6 +125,7 @@ class IncomingMessage:
     sender_phone_jid: str | None = None
     reply_to_jid: str | None = None
     sender_aliases: tuple[str, ...] = ()
+    attachment: MessageAttachment | None = None
 
     @property
     def resolved_reply_to_jid(self) -> str:

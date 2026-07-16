@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from datetime import UTC, datetime
 from typing import Any
 
@@ -12,6 +13,7 @@ from whatsaap_backend.application.services import (
     DEFAULT_RUN_SCRIPT_ACK_TEXT,
     ProcessIncomingMessageService,
 )
+from whatsaap_backend.config import Settings
 from whatsaap_backend.domain.models import (
     ActionType,
     BusinessMessage,
@@ -20,6 +22,7 @@ from whatsaap_backend.domain.models import (
     ConditionOperator,
     ContactIdentity,
     IncomingMessage,
+    MessageAttachment,
     RuleAction,
 )
 
@@ -183,10 +186,16 @@ class _FakeScriptSandbox:
     """
 
     def __init__(
-        self, result: ScriptRunResult | None = None, raise_unavailable: bool = False
+        self,
+        result: ScriptRunResult | None = None,
+        raise_unavailable: bool = False,
+        results: list[ScriptRunResult] | None = None,
     ) -> None:
         self._result = result if result is not None else ScriptRunResult(ok=True)
         self._raise_unavailable = raise_unavailable
+        # Bulk-fan-out tests need a different outcome per row/call; single-call
+        # tests keep using the fixed `result` above (this stays None for them).
+        self._results = results
         self.calls: list[dict[str, Any]] = []
 
     async def run(
@@ -197,6 +206,8 @@ class _FakeScriptSandbox:
         )
         if self._raise_unavailable:
             raise ScriptSandboxUnavailableError("sandbox not verified")
+        if self._results is not None:
+            return self._results[len(self.calls) - 1]
         return self._result
 
 
@@ -220,7 +231,11 @@ def _script_rule(
     )
 
 
-def _message(text: str = "hola", sender: str = "573001112233@s.whatsapp.net") -> IncomingMessage:
+def _message(
+    text: str = "hola",
+    sender: str = "573001112233@s.whatsapp.net",
+    attachment: MessageAttachment | None = None,
+) -> IncomingMessage:
     return IncomingMessage(
         message_id="msg-1",
         tenant_id="acme",
@@ -230,6 +245,15 @@ def _message(text: str = "hola", sender: str = "573001112233@s.whatsapp.net") ->
         text=text,
         message_type="text",
         occurred_at=datetime.now(UTC),
+        attachment=attachment,
+    )
+
+
+def _csv_attachment(text: str) -> MessageAttachment:
+    return MessageAttachment(
+        mime_type="text/csv",
+        base64_content=base64.b64encode(text.encode("utf-8")).decode("ascii"),
+        file_name="traslados.csv",
     )
 
 
@@ -442,3 +466,107 @@ async def test_run_script_ack_is_sent_even_when_script_later_fails() -> None:
 
     assert len(uow.outbox.drafts) == 1
     assert uow.outbox.drafts[0].envelope.payload["text"] == DEFAULT_RUN_SCRIPT_ACK_TEXT
+
+
+# ── Bulk CSV ("TRASLADO TIENDA" + attached CSV) ──────────────────────────────
+
+_BULK_CSV = (
+    "Cedula,Nombre,Correo,Tienda,Promotor,Celular\n"
+    "111,Ana Gomez,ana@x.co,100 TIENDA CENTRO,WOM,3000000001\n"
+    "222,Beto Ruiz,beto@x.co,200 TIENDA SUR,WOM,3000000002\n"
+    "333,Cielo Diaz,,300 TIENDA NORTE,WOM,3000000003\n"
+)
+
+
+def _settings(**overrides: object) -> Settings:
+    return Settings(**overrides)  # type: ignore[arg-type]
+
+
+async def test_bulk_csv_sends_one_ack_and_runs_the_script_once_per_row() -> None:
+    uow = _FakeUow([_script_rule(ack_text="off")])
+    fake_sandbox = _FakeScriptSandbox(
+        results=[
+            ScriptRunResult(ok=True, business_data={"resultado": "GUARDADO"}),
+            ScriptRunResult(ok=True, business_data={"resultado": "NO_ENCONTRADO"}),
+        ]
+    )
+
+    result = await ProcessIncomingMessageService(
+        _FakeFactory(uow), script_sandbox=fake_sandbox
+    ).execute(_message(attachment=_csv_attachment(_BULK_CSV)), correlation_id="corr-1")
+
+    assert result.actions_created == 1
+    # Only 2 sandbox runs — the 3rd CSV row (missing Correo) is skipped before ever reaching it.
+    assert len(fake_sandbox.calls) == 2
+    assert fake_sandbox.calls[0]["input_payload"]["message"]["text"].startswith("TRASLADO TIENDA")
+
+    # One ack ("recibimos tu archivo...") + one final summary — never a reply per row.
+    assert len(uow.outbox.drafts) == 2
+    ack_text = uow.outbox.drafts[0].envelope.payload["text"]
+    assert "2 traslado" in ack_text
+    summary_text = uow.outbox.drafts[1].envelope.payload["text"]
+    assert "1 exitosos, 1 con error" in summary_text
+    assert "1 fila(s) omitida(s)" in summary_text
+    assert "Fila 3" in summary_text  # the skipped row is named in the summary
+
+
+async def test_bulk_csv_persists_one_business_message_per_successful_row() -> None:
+    uow = _FakeUow([_script_rule(ack_text="off")])
+    fake_sandbox = _FakeScriptSandbox(
+        results=[
+            ScriptRunResult(ok=True, business_data={"resultado": "GUARDADO"}),
+            ScriptRunResult(ok=True, business_data={"resultado": "YA_CORRECTA"}),
+        ]
+    )
+
+    await ProcessIncomingMessageService(_FakeFactory(uow), script_sandbox=fake_sandbox).execute(
+        _message(attachment=_csv_attachment(_BULK_CSV)), correlation_id="corr-1"
+    )
+
+    assert len(uow.business_messages.added) == 2
+    assert uow.business_messages.added[0].message_id == "msg-1:row-1"
+    assert uow.business_messages.added[1].message_id == "msg-1:row-2"
+
+
+async def test_bulk_csv_rejects_a_file_over_the_configured_row_limit() -> None:
+    uow = _FakeUow([_script_rule(ack_text="off")])
+    fake_sandbox = _FakeScriptSandbox()
+
+    await ProcessIncomingMessageService(
+        _FakeFactory(uow),
+        script_sandbox=fake_sandbox,
+        settings=_settings(MAX_CSV_ROWS_PER_UPLOAD=1),
+    ).execute(_message(attachment=_csv_attachment(_BULK_CSV)), correlation_id="corr-1")
+
+    assert fake_sandbox.calls == []
+    assert len(uow.outbox.drafts) == 1
+    assert "No pude procesar tu archivo" in uow.outbox.drafts[0].envelope.payload["text"]
+
+
+async def test_bulk_csv_reports_sandbox_unavailable_per_row_without_raising() -> None:
+    uow = _FakeUow([_script_rule(ack_text="off")])
+    fake_sandbox = _FakeScriptSandbox(raise_unavailable=True)
+
+    await ProcessIncomingMessageService(_FakeFactory(uow), script_sandbox=fake_sandbox).execute(
+        _message(attachment=_csv_attachment(_BULK_CSV)), correlation_id="corr-1"
+    )
+
+    summary_text = uow.outbox.drafts[-1].envelope.payload["text"]
+    assert "sandbox no disponible" in summary_text
+    assert "0 exitosos, 2 con error" in summary_text
+
+
+async def test_non_csv_attachment_does_not_trigger_bulk_mode() -> None:
+    uow = _FakeUow([_script_rule(ack_text="off")])
+    fake_sandbox = _FakeScriptSandbox(ScriptRunResult(ok=True, reply_text="ok"))
+    pdf_attachment = MessageAttachment(
+        mime_type="application/pdf", base64_content="x", file_name="a.pdf"
+    )
+
+    await ProcessIncomingMessageService(_FakeFactory(uow), script_sandbox=fake_sandbox).execute(
+        _message(attachment=pdf_attachment), correlation_id="corr-1"
+    )
+
+    # Falls through to the normal single-script path — one sandbox call, one reply.
+    assert len(fake_sandbox.calls) == 1
+    assert uow.outbox.drafts[0].envelope.payload["text"] == "ok"

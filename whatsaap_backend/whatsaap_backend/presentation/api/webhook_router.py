@@ -19,7 +19,7 @@ from whatsaap_backend.application.contracts import MessageEnvelope
 from whatsaap_backend.application.direct_delivery_service import ProcessIncomingMessageDirectService
 from whatsaap_backend.application.services import IngestWebhookService
 from whatsaap_backend.config import Settings
-from whatsaap_backend.domain.models import IncomingMessage
+from whatsaap_backend.domain.models import IncomingMessage, MessageAttachment
 
 from .errors import ProblemDetailsError
 
@@ -78,6 +78,7 @@ def _incoming_message_from_webhook(data: dict[str, Any], tenant_id: str) -> Inco
         is_group=bool(data.get("isGroup", False)),
         push_name=str(data.get("pushName") or ""),
         raw_payload=data,
+        attachment=MessageAttachment.from_payload(data.get("attachment")),
     )
 
 

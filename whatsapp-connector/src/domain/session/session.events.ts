@@ -48,6 +48,16 @@ export class QrGeneratedEvent extends DomainEvent {
   }
 }
 
+/** Inbound document/image/etc. attachment, downloaded and base64-encoded at the
+ * edge so consumers (the rules backend) never need their own WhatsApp media
+ * session. Only populated for message types the adapter chooses to download —
+ * see baileys-session.adapter.ts's CSV_LIKE_MIME_TYPES. */
+export interface InboundAttachment {
+  readonly mimeType: string;
+  readonly fileName?: string;
+  readonly base64: string;
+}
+
 export class MessageReceivedEvent extends DomainEvent {
   readonly eventName = 'MESSAGE_RECEIVED';
   constructor(
@@ -59,6 +69,7 @@ export class MessageReceivedEvent extends DomainEvent {
     readonly timestamp: number,
     readonly text: string,
     readonly pushName: string,
+    readonly attachment?: InboundAttachment,
   ) {
     super();
   }

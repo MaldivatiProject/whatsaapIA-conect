@@ -10,7 +10,16 @@ from whatsaap_backend.domain.models import (
     ConditionOperator,
     RuleAction,
 )
+from whatsaap_backend.infrastructure import security_settings
 from whatsaap_backend.presentation.api.schemas import RuleActionSchema, RuleOut
+
+
+def setup_function() -> None:
+    security_settings.set_allow_hardcoded_script_secrets(False)
+
+
+def teardown_function() -> None:
+    security_settings.set_allow_hardcoded_script_secrets(False)
 
 _VALID_SCRIPT = """
 def handle(message):
@@ -95,13 +104,35 @@ def test_script_rejects_non_list_secrets() -> None:
         _run_script(_VALID_SCRIPT, secrets="STRIPE_API_KEY")  # type: ignore[arg-type]
 
 
+def test_script_with_hardcoded_secret_is_accepted_when_flag_enabled() -> None:
+    security_settings.set_allow_hardcoded_script_secrets(True)
+    script = """
+def handle(message):
+    password = "correct horse battery staple"
+    return {"ok": True}
+"""
+    action = _run_script(script)
+    assert "correct horse battery staple" in action.params["script"]
+
+
+def test_flag_disabled_by_default_still_rejects_hardcoded_secrets() -> None:
+    assert security_settings.get_allow_hardcoded_script_secrets() is False
+    with pytest.raises(ValidationError, match="hardcoded credential"):
+        _run_script('def handle(message):\n    password = "correct horse battery staple"\n')
+
+
 def test_from_domain_does_not_reject_a_previously_stored_script() -> None:
     """A rule already persisted must stay readable even if a later, stricter
     validate_run_script would now reject its script on write — validation
     belongs on the write path (RuleCreate/RuleUpdate), never on read."""
     action = RuleAction(
         type=ActionType.RUN_SCRIPT,
-        params={"script": 'def handle(message):\n    token = "ghp_thisWouldFailOnWrite123456"\n    return {}'},
+        params={
+            "script": (
+                'def handle(message):\n    token = "ghp_thisWouldFailOnWrite123456"\n'
+                "    return {}"
+            )
+        },
     )
     schema = RuleActionSchema.from_domain(action)
     assert schema.params["script"] == action.params["script"]
@@ -118,7 +149,12 @@ def test_rule_out_from_domain_does_not_reject_a_previously_stored_rule() -> None
         actions=(
             RuleAction(
                 type=ActionType.RUN_SCRIPT,
-                params={"script": 'def handle(message):\n    token = "ghp_thisWouldFailOnWrite123456"\n    return {}'},
+                params={
+            "script": (
+                'def handle(message):\n    token = "ghp_thisWouldFailOnWrite123456"\n'
+                "    return {}"
+            )
+        },
             ),
         ),
     )

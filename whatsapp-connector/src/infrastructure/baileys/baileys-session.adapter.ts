@@ -3,6 +3,7 @@ import pino from 'pino';
 import makeWASocket, {
   Browsers,
   DisconnectReason,
+  downloadMediaMessage,
   fetchLatestBaileysVersion,
   isJidGroup,
   jidNormalizedUser,
@@ -30,6 +31,7 @@ import {
   GroupMessageReceivedEvent,
   PrivateMessageReceivedEvent,
   MediaReceivedEvent,
+  type InboundAttachment,
 } from '../../domain/session/session.events';
 import { hashJid } from '../../shared/context/request-context';
 import type { Redis as ValkeyClient } from 'ioredis';
@@ -38,6 +40,20 @@ export const VALKEY_CLIENT = Symbol('ValkeyClient');
 
 // Message dedup TTL: 5 minutes — same as Baileys redelivery window
 const DEDUP_TTL_SECONDS = 300;
+
+// Inbound documents matching either the mimetype or filename extension get downloaded
+// and base64-embedded on MessageReceivedEvent — e.g. bulk-upload CSVs (rules like
+// "Traslado de tienda" read them to fan out one automation run per row). Everything
+// else (images, audio, video, other documents) stays metadata-only, as before.
+const CSV_LIKE_MIME_TYPES = new Set([
+  'text/csv',
+  'application/csv',
+  'application/vnd.ms-excel',
+]);
+
+function isCsvLikeDocument(mimeType: string, fileName: string | undefined): boolean {
+  return CSV_LIKE_MIME_TYPES.has(mimeType.toLowerCase()) || Boolean(fileName?.toLowerCase().endsWith('.csv'));
+}
 
 @Injectable()
 export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
@@ -327,6 +343,8 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
       `Message received: id=${messageId} from=${hashJid(from)} type=${messageType}`,
     );
 
+    const attachment = await this.downloadCsvAttachment(msg, messageType);
+
     const events = [];
 
     events.push(
@@ -339,6 +357,7 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
         timestamp,
         text,
         pushName,
+        attachment,
       ),
     );
 
@@ -386,6 +405,37 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
     }
 
     await this.eventPublisher.publishMany(events as never[]);
+  }
+
+  /** Downloads a CSV-like document attachment and base64-encodes it for
+   * MessageReceivedEvent. Never throws — a download failure (expired media,
+   * network blip) must not drop the message itself; it just arrives text-only. */
+  private async downloadCsvAttachment(
+    msg: WAMessage,
+    messageType: string,
+  ): Promise<InboundAttachment | undefined> {
+    if (messageType !== 'documentMessage') return undefined;
+    const document = msg.message?.documentMessage;
+    const mimeType = document?.mimetype ?? 'application/octet-stream';
+    const fileName = document?.fileName ?? undefined;
+    if (!isCsvLikeDocument(mimeType, fileName)) return undefined;
+
+    try {
+      const buffer = await downloadMediaMessage(msg, 'buffer', {});
+      const maxBytes = this.config.MAX_MEDIA_SIZE_MB * 1024 * 1024;
+      if (buffer.length > maxBytes) {
+        this.logger.warn(
+          `CSV attachment exceeds MAX_MEDIA_SIZE_MB (${buffer.length} bytes) — dropping attachment, message continues text-only`,
+        );
+        return undefined;
+      }
+      return { mimeType, base64: buffer.toString('base64'), ...(fileName !== undefined ? { fileName } : {}) };
+    } catch (error) {
+      this.logger.warn(
+        `Failed to download CSV attachment: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return undefined;
+    }
   }
 
   async disconnect(sessionId: SessionId): Promise<void> {

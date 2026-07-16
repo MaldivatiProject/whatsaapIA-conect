@@ -377,3 +377,31 @@ class DriveIntegrationConfigModel(StandardColumns, Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
     )
+
+
+class SecuritySettingsModel(StandardColumns, Base):
+    """Platform-wide (not per-tenant) singleton — exactly one active row,
+    enforced by uk_security_settings_singleton. See
+    infrastructure.security_settings for the in-process cache read by the
+    RuleActionSchema validator this row controls."""
+
+    __tablename__ = "security_settings"
+    __table_args__ = (
+        UniqueConstraint("uuid_security_settings", name="uk_security_settings_uuid"),
+        Index("idx_security_settings_uuid", "uuid_security_settings"),
+        {"schema": SCHEMA},
+    )
+
+    pkid_security_settings: Mapped[int] = mapped_column(
+        BigInteger, Identity(always=True), primary_key=True
+    )
+    uuid_security_settings: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True), nullable=False, server_default=func.gen_random_uuid()
+    )
+    allow_hardcoded_script_secrets: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now()
+    )
+    updated_by: Mapped[str | None] = mapped_column(String(128))

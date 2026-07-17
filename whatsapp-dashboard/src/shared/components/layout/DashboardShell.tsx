@@ -206,8 +206,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         </SheetContent>
       </Sheet>
 
-      <div className="flex min-h-0 flex-1 flex-col">
-        <header className="flex shrink-0 items-center justify-between gap-4 border-b px-4 py-3 sm:px-6">
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <header className="sticky top-0 z-10 flex shrink-0 items-center justify-between gap-4 border-b border-border/60 bg-background/70 px-4 py-3 backdrop-blur-md supports-backdrop-filter:bg-background/60 sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex items-center gap-2 sm:hidden">
               <Button
@@ -233,7 +233,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             </Badge>
           </div>
         </header>
-        <main className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">{children}</main>
+        <main className="flex-1 p-4 sm:p-6">{children}</main>
       </div>
     </div>
   );

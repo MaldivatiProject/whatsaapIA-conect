@@ -4,7 +4,15 @@ import { useState, type ChangeEvent, type DragEvent, type ReactNode } from "reac
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
-import { FileCode, Info, SlidersHorizontal, UploadCloud, type LucideIcon } from "lucide-react";
+import {
+  FileCode,
+  FileSpreadsheet,
+  Info,
+  Search,
+  SlidersHorizontal,
+  UploadCloud,
+  type LucideIcon,
+} from "lucide-react";
 import { Button } from "@/shared/components/ui/button";
 import { Input } from "@/shared/components/ui/input";
 import { Label } from "@/shared/components/ui/label";
@@ -30,11 +38,12 @@ const formSchema = z
     senderValue: z.string(),
     isGroupValue: z.enum(["true", "false"]),
     textValue: z.string(),
-    actionType: z.enum(["send_text", "run_script"]),
+    actionType: z.enum(["send_text", "run_script", "run_script_bulk", "query_traslado_status"]),
     replyText: z.string().max(4096),
     scriptSource: z.string(),
     scriptFileName: z.string(),
     ackText: z.string().max(4096),
+    queryBusinessCategory: z.string().max(80),
   })
   .refine((v) => v.field !== "sender" || v.senderValue.trim().length > 0, {
     message: "Ingresá el JID del remitente",
@@ -48,10 +57,10 @@ const formSchema = z
     message: "Requerido",
     path: ["replyText"],
   })
-  .refine((v) => v.actionType !== "run_script" || v.scriptSource.trim().length > 0, {
-    message: "Pegá o subí el código del script",
-    path: ["scriptSource"],
-  })
+  .refine(
+    (v) => (v.actionType !== "run_script" && v.actionType !== "run_script_bulk") || v.scriptSource.trim().length > 0,
+    { message: "Pegá o subí el código del script", path: ["scriptSource"] },
+  )
   .refine(
     (v) => new TextEncoder().encode(v.scriptSource).length <= CLIENT_SIDE_MAX_SCRIPT_BYTES,
     { message: "El script es demasiado grande (máx. 64 KB).", path: ["scriptSource"] },
@@ -70,9 +79,14 @@ const IS_GROUP_LABELS: Record<"true" | "false", string> = {
   false: "No, es un chat individual",
 };
 
-const ACTION_TYPE_LABELS: Record<"send_text" | "run_script", string> = {
+const ACTION_TYPE_LABELS: Record<
+  "send_text" | "run_script" | "run_script_bulk" | "query_traslado_status",
+  string
+> = {
   send_text: "Responder con un texto",
   run_script: "Ejecutar un script Python",
+  run_script_bulk: "Ejecutar script con CSV masivo",
+  query_traslado_status: "Consultar estado de traslado",
 };
 
 export const EMPTY_RULE_FORM_VALUES: SimpleRuleFormValues = {
@@ -88,6 +102,7 @@ export const EMPTY_RULE_FORM_VALUES: SimpleRuleFormValues = {
   scriptSource: "",
   scriptFileName: "",
   ackText: "",
+  queryBusinessCategory: "",
 };
 
 const DEFAULT_ACK_TEXT_PLACEHOLDER =
@@ -281,21 +296,80 @@ export function RuleFormFields({
         )}
       </FormSection>
 
-      <FormSection icon={actionType === "run_script" ? FileCode : SlidersHorizontal} title="Entonces">
+      <FormSection
+        icon={
+          actionType === "run_script_bulk"
+            ? FileSpreadsheet
+            : actionType === "run_script"
+              ? FileCode
+              : actionType === "query_traslado_status"
+                ? Search
+                : SlidersHorizontal
+        }
+        title="Entonces"
+      >
         <Select
           value={actionType}
-          onValueChange={(next) => setValue("actionType", next as "send_text" | "run_script")}
+          onValueChange={(next) =>
+            setValue(
+              "actionType",
+              next as "send_text" | "run_script" | "run_script_bulk" | "query_traslado_status",
+            )
+          }
         >
           <SelectTrigger id="rule-action-type" className="h-8 w-full">
             <SelectValue>
-              {(v: unknown) => ACTION_TYPE_LABELS[v as "send_text" | "run_script"]}
+              {(v: unknown) =>
+                ACTION_TYPE_LABELS[
+                  v as "send_text" | "run_script" | "run_script_bulk" | "query_traslado_status"
+                ]
+              }
             </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="send_text">Responder con un texto</SelectItem>
             <SelectItem value="run_script">Ejecutar un script Python</SelectItem>
+            <SelectItem value="run_script_bulk">Ejecutar script con CSV masivo</SelectItem>
+            <SelectItem value="query_traslado_status">Consultar estado de traslado</SelectItem>
           </SelectContent>
         </Select>
+
+        {actionType === "run_script_bulk" && (
+          <p className="flex items-start gap-1.5 rounded-md bg-muted/50 p-2 text-xs text-muted-foreground">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+            <span className="min-w-0">
+              Esta regla solo se activa cuando el mensaje trae, además de la condición de arriba,
+              un archivo <code>.csv</code> adjunto — se agrega esa condición automáticamente. El
+              script corre una vez por fila del CSV. Poné un <strong>orden de ejecución menor</strong>{" "}
+              al de cualquier otra regla que use la misma condición de texto (por ejemplo, si esa
+              otra regla usa 100, poné acá 50), para que esta se evalúe primero y no se disparen
+              las dos a la vez.
+            </span>
+          </p>
+        )}
+
+        {actionType === "query_traslado_status" && (
+          <div className="space-y-2">
+            <p className="flex items-start gap-1.5 rounded-md bg-muted/50 p-2 text-xs text-muted-foreground">
+              <Info className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+              <span className="min-w-0">
+                Busca el correo dentro del texto del mensaje y responde con el último traslado
+                registrado para ese correo (no ejecuta ningún script nuevo — solo consulta lo que{" "}
+                <em>Traslado de tienda</em> ya guardó). Si no encuentra el correo o no hay
+                registros, responde con un mensaje explicándolo.
+              </span>
+            </p>
+            <Label htmlFor="rule-query-category">Categoría de negocio a consultar</Label>
+            <Input
+              id="rule-query-category"
+              placeholder="traslado_tienda"
+              {...register("queryBusinessCategory")}
+            />
+            <p className="text-xs text-muted-foreground">
+              Dejalo vacío para usar <code>traslado_tienda</code> (el valor por defecto).
+            </p>
+          </div>
+        )}
 
         {actionType === "send_text" && (
           <div className="space-y-2">
@@ -316,7 +390,7 @@ export function RuleFormFields({
           </div>
         )}
 
-        {actionType === "run_script" && (
+        {(actionType === "run_script" || actionType === "run_script_bulk") && (
           <div className="space-y-2">
             <Label htmlFor="rule-script">Script Python (define def handle(message):)</Label>
             <textarea

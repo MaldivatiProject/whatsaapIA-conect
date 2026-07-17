@@ -5,8 +5,10 @@ import makeWASocket, {
   DisconnectReason,
   downloadMediaMessage,
   fetchLatestBaileysVersion,
+  getContentType,
   isJidGroup,
   jidNormalizedUser,
+  normalizeMessageContent,
   type WAMessage,
 } from '@whiskeysockets/baileys';
 import { Boom } from '@hapi/boom';
@@ -322,18 +324,25 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
     // @lid JIDs are WhatsApp's internal multi-device IDs — resolve to phone JID when possible
     const from = this.resolveLid(sessionId, rawFrom);
     const isGroup = isJidGroup(from) ?? false;
-    const messageType = Object.keys(msg.message)[0] ?? 'unknown';
+    // WhatsApp wraps some messages in a version-proofing envelope — most
+    // notably a document sent WITH a caption arrives as
+    // documentWithCaptionMessage.message.documentMessage, not a flat
+    // documentMessage. Same for disappearing (ephemeral) and view-once
+    // messages. Unwrap with Baileys' own helper before reading type/text/media,
+    // or captions and CSV attachments on wrapped messages are silently missed.
+    const content = normalizeMessageContent(msg.message) ?? msg.message;
+    const messageType = getContentType(content) ?? 'unknown';
     const timestamp = Number(msg.messageTimestamp);
 
     // Extract text content — covers plain text, quoted replies, and button responses
     const text: string =
-      msg.message.conversation ??
-      msg.message.extendedTextMessage?.text ??
-      msg.message.buttonsResponseMessage?.selectedDisplayText ??
-      msg.message.listResponseMessage?.title ??
-      msg.message.imageMessage?.caption ??
-      msg.message.videoMessage?.caption ??
-      msg.message.documentMessage?.caption ??
+      content.conversation ??
+      content.extendedTextMessage?.text ??
+      content.buttonsResponseMessage?.selectedDisplayText ??
+      content.listResponseMessage?.title ??
+      content.imageMessage?.caption ??
+      content.videoMessage?.caption ??
+      content.documentMessage?.caption ??
       '';
 
     // pushName is the sender's display name as set on their device — always present in incoming msgs
@@ -343,7 +352,7 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
       `Message received: id=${messageId} from=${hashJid(from)} type=${messageType}`,
     );
 
-    const attachment = await this.downloadCsvAttachment(msg, messageType);
+    const attachment = await this.downloadCsvAttachment(msg, messageType, content);
 
     const events = [];
 
@@ -397,7 +406,7 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
       'stickerMessage',
     ];
     if (mediaTypes.includes(messageType)) {
-      const messageRecord = msg.message as Record<string, { mimetype?: string } | undefined>;
+      const messageRecord = content as Record<string, { mimetype?: string } | undefined>;
       const mimeType = messageRecord[messageType]?.mimetype ?? 'application/octet-stream';
       events.push(
         new MediaReceivedEvent(sessionId, messageId, from, messageType, mimeType, timestamp),
@@ -413,9 +422,10 @@ export class BaileysSessionAdapter implements SessionSocketPort, OnModuleInit {
   private async downloadCsvAttachment(
     msg: WAMessage,
     messageType: string,
+    content: WAMessage['message'],
   ): Promise<InboundAttachment | undefined> {
     if (messageType !== 'documentMessage') return undefined;
-    const document = msg.message?.documentMessage;
+    const document = content?.documentMessage;
     const mimeType = document?.mimetype ?? 'application/octet-stream';
     const fileName = document?.fileName ?? undefined;
     if (!isCsvLikeDocument(mimeType, fileName)) return undefined;

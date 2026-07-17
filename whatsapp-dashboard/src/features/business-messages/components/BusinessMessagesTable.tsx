@@ -44,12 +44,27 @@ function formatFecha(iso: string): string {
   );
 }
 
+/** created_by is stored as "rule:{uuid}" — resolve it to the rule's current
+ * name so results from e.g. "Traslado de tienda" and "Traslado de tienda
+ * (masivo)" are distinguishable (both share the same business_category). */
+function reglaDe(message: BusinessMessage, ruleNameById: Record<string, string>): string {
+  const ruleId = message.created_by?.startsWith("rule:") ? message.created_by.slice(5) : null;
+  if (!ruleId) return "—";
+  return ruleNameById[ruleId] ?? "Regla eliminada";
+}
+
 interface BusinessMessagesTableProps {
   messages: BusinessMessage[];
   emptyMessage?: string;
+  /** Maps rule id -> current rule name, used to resolve `created_by`. */
+  ruleNameById: Record<string, string>;
 }
 
-export function BusinessMessagesTable({ messages, emptyMessage }: BusinessMessagesTableProps) {
+export function BusinessMessagesTable({
+  messages,
+  emptyMessage,
+  ruleNameById,
+}: BusinessMessagesTableProps) {
   const [selected, setSelected] = useState<BusinessMessage | null>(null);
   const columns: DataTableColumn<BusinessMessage>[] = [
     {
@@ -68,6 +83,15 @@ export function BusinessMessagesTable({ messages, emptyMessage }: BusinessMessag
       exportValue: (message) => message.business_category,
       sortValue: (message) => message.business_category,
       pdfWidth: 95,
+    },
+    {
+      id: "rule",
+      header: "Regla",
+      cell: (message) => reglaDe(message, ruleNameById),
+      exportValue: (message) => reglaDe(message, ruleNameById),
+      sortValue: (message) => reglaDe(message, ruleNameById),
+      cellClassName: "text-muted-foreground",
+      pdfWidth: 130,
     },
     {
       id: "sender",
@@ -126,7 +150,7 @@ export function BusinessMessagesTable({ messages, emptyMessage }: BusinessMessag
           emptyMessage ??
           'No hay mensajes de negocio todavía. Van a aparecer acá cuando una regla con acción "Ejecutar script Python" devuelva datos estructurados.'
         }
-        exportConfig={{ title: "Resultados", filename: "resultados" }}
+        exportConfig={{ title: "Log", filename: "log" }}
         defaultSort={{ columnId: "received_at", direction: "desc" }}
         pagination={{ pageSize: 10 }}
       />

@@ -43,6 +43,32 @@ function documentMessage(overrides: {
   } as unknown as WAMessage;
 }
 
+function documentWithCaptionMessage(overrides: {
+  mimetype?: string;
+  fileName?: string;
+  caption?: string;
+  id?: string;
+}): WAMessage {
+  return {
+    key: { id: overrides.id ?? 'msg-1', remoteJid: '573000000000@s.whatsapp.net', fromMe: false },
+    messageTimestamp: Math.floor(Date.now() / 1000),
+    pushName: 'Tester',
+    message: {
+      // WhatsApp wraps a document sent WITH a caption in this version-proofing
+      // envelope instead of a flat documentMessage — see baileys-session.adapter.ts.
+      documentWithCaptionMessage: {
+        message: {
+          documentMessage: {
+            mimetype: overrides.mimetype ?? 'text/csv',
+            fileName: overrides.fileName ?? 'traslados.csv',
+            caption: overrides.caption ?? 'TRASLADO TIENDA',
+          },
+        },
+      },
+    },
+  } as unknown as WAMessage;
+}
+
 describe('BaileysSessionAdapter — CSV attachment download', () => {
   beforeEach(() => {
     (downloadMediaMessage as jest.Mock).mockReset();
@@ -125,5 +151,25 @@ describe('BaileysSessionAdapter — CSV attachment download', () => {
     const events = publishMany.mock.calls[0][0] as MessageReceivedEvent[];
     const received = events.find((e) => e instanceof MessageReceivedEvent) as MessageReceivedEvent;
     expect(received.attachment).toBeUndefined();
+  });
+
+  it('extracts the caption and downloads the CSV from a document sent WITH a caption', async () => {
+    (downloadMediaMessage as jest.Mock).mockResolvedValue(Buffer.from('Cedula;Nombre\n123;Ana'));
+    const publishMany = jest.fn();
+    const adapter = buildAdapter(publishMany);
+
+    await (adapter as unknown as PrivateAdapter).handleIncomingMessage(
+      'session-1',
+      documentWithCaptionMessage({}),
+    );
+
+    const events = publishMany.mock.calls[0][0] as MessageReceivedEvent[];
+    const received = events.find((e) => e instanceof MessageReceivedEvent) as MessageReceivedEvent;
+    expect(received.text).toBe('TRASLADO TIENDA');
+    expect(received.attachment).toEqual({
+      mimeType: 'text/csv',
+      fileName: 'traslados.csv',
+      base64: Buffer.from('Cedula;Nombre\n123;Ana').toString('base64'),
+    });
   });
 });

@@ -62,7 +62,7 @@ def handle(message):
     {snippet}
     return {{"ok": True}}
 """
-    with pytest.raises(ValidationError, match="hardcoded credential"):
+    with pytest.raises(ValidationError, match="credencial real"):
         _run_script(script)
 
 
@@ -95,12 +95,12 @@ def test_script_can_declare_valid_secret_names() -> None:
 
 @pytest.mark.parametrize("bad_name", ["stripe_api_key", "1KEY", "", "key-with-dash"])
 def test_script_rejects_invalid_secret_name(bad_name: str) -> None:
-    with pytest.raises(ValidationError, match="params.secrets contains an invalid name"):
+    with pytest.raises(ValidationError, match="nombre de secreto"):
         _run_script(_VALID_SCRIPT, secrets=[bad_name])
 
 
 def test_script_rejects_non_list_secrets() -> None:
-    with pytest.raises(ValidationError, match="params.secrets must be a list of strings"):
+    with pytest.raises(ValidationError, match="lista de secretos"):
         _run_script(_VALID_SCRIPT, secrets="STRIPE_API_KEY")  # type: ignore[arg-type]
 
 
@@ -117,7 +117,7 @@ def handle(message):
 
 def test_flag_disabled_by_default_still_rejects_hardcoded_secrets() -> None:
     assert security_settings.get_allow_hardcoded_script_secrets() is False
-    with pytest.raises(ValidationError, match="hardcoded credential"):
+    with pytest.raises(ValidationError, match="credencial real"):
         _run_script('def handle(message):\n    password = "correct horse battery staple"\n')
 
 
@@ -160,3 +160,20 @@ def test_rule_out_from_domain_does_not_reject_a_previously_stored_rule() -> None
     )
     out = RuleOut.from_domain(rule)
     assert out.actions[0].params["script"] == rule.actions[0].params["script"]
+
+
+def test_query_traslado_status_accepts_no_params() -> None:
+    action = RuleActionSchema(type=ActionType.QUERY_TRASLADO_STATUS, params={})
+    assert action.params == {}
+
+
+def test_query_traslado_status_accepts_a_string_business_category() -> None:
+    action = RuleActionSchema(
+        type=ActionType.QUERY_TRASLADO_STATUS, params={"business_category": "otro_flujo"}
+    )
+    assert action.params["business_category"] == "otro_flujo"
+
+
+def test_query_traslado_status_rejects_a_non_string_business_category() -> None:
+    with pytest.raises(ValidationError):
+        RuleActionSchema(type=ActionType.QUERY_TRASLADO_STATUS, params={"business_category": 123})

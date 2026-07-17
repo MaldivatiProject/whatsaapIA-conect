@@ -1,6 +1,6 @@
 "use client";
 
-import { Code2, MoreHorizontal, Power, PowerOff, Reply, Trash2 } from "lucide-react";
+import { Code2, FileSpreadsheet, MoreHorizontal, Power, PowerOff, Reply, Search, Trash2 } from "lucide-react";
 import { DataTable, type DataTableColumn } from "@/shared/components/data/DataTable";
 import { Badge } from "@/shared/components/ui/badge";
 import { Button } from "@/shared/components/ui/button";
@@ -12,7 +12,7 @@ import {
 } from "@/shared/components/ui/dropdown-menu";
 import { RuleDetailPanel } from "@/features/rules/components/RuleDetailPanel";
 import { categoryColorToken, conditionFieldIcon } from "@/features/rules/lib/presentation";
-import { summarizeRuleActions, summarizeRuleConditions } from "@/features/rules/lib/mapping";
+import { isBulkCsvRule, summarizeRuleActions, summarizeRuleConditions } from "@/features/rules/lib/mapping";
 import type { CreateRuleInput, Rule } from "@/features/rules/types/rule.types";
 
 interface RulesTableProps {
@@ -83,9 +83,21 @@ export function RulesTable({ rules, onToggleEnabled, onSaveRule, isSavingRule, o
       header: "Acción",
       cell: (rule) => {
         const isScript = rule.actions.some((action) => action.type === "run_script");
+        const isQuery = rule.actions.some((action) => action.type === "query_traslado_status");
+        const isBulk = isBulkCsvRule(rule);
         return (
           <div className="flex items-center gap-2">
-            {isScript ? (
+            {isBulk ? (
+              <Badge variant="outline" className="gap-1" title="Requiere un archivo .csv adjunto">
+                <FileSpreadsheet className="h-3 w-3" aria-hidden="true" />
+                CSV masivo
+              </Badge>
+            ) : isQuery ? (
+              <Badge variant="outline" className="gap-1">
+                <Search className="h-3 w-3" aria-hidden="true" />
+                Consulta
+              </Badge>
+            ) : isScript ? (
               <Badge variant="outline" className="gap-1">
                 <Code2 className="h-3 w-3" aria-hidden="true" />
                 Script

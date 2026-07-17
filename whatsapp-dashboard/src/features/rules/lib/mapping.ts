@@ -1,9 +1,12 @@
 import type { CreateRuleInput, Rule, RuleCondition, SimpleRuleFormValues } from "@/features/rules/types/rule.types";
 
+const HAS_CSV_ATTACHMENT_FIELD = "has_csv_attachment";
+
 const FIELD_LABEL: Record<string, string> = {
   sender: "Remitente",
   is_group: "Es grupo",
   text: "El texto",
+  [HAS_CSV_ATTACHMENT_FIELD]: "Adjunto CSV",
 };
 
 const OPERATOR_LABEL: Record<string, string> = {
@@ -30,19 +33,38 @@ export function buildCreateRuleInput(values: SimpleRuleFormValues): CreateRuleIn
       break;
   }
 
+  const isBulk = values.actionType === "run_script_bulk";
+  const isRunScript = values.actionType === "run_script" || isBulk;
+  const isQuery = values.actionType === "query_traslado_status";
+
   return {
     name: values.name.trim(),
     category: values.category.trim() || "general",
     priority: values.priority,
-    conditions: [condition],
-    actions:
-      values.actionType === "run_script"
+    conditions: isBulk
+      ? [condition, { field: HAS_CSV_ATTACHMENT_FIELD, operator: "equals", value: true }]
+      : [condition],
+    // Bulk is dashboard-only sugar over the same run_script action — see
+    // ActionKind's doc comment in rule.types.ts.
+    ...(isBulk ? { stop_on_match: true } : {}),
+    actions: isRunScript
+      ? [
+          {
+            type: "run_script",
+            params: {
+              script: values.scriptSource,
+              ...(values.ackText.trim() ? { ack_text: values.ackText.trim() } : {}),
+            },
+          },
+        ]
+      : isQuery
         ? [
             {
-              type: "run_script",
+              type: "query_traslado_status",
               params: {
-                script: values.scriptSource,
-                ...(values.ackText.trim() ? { ack_text: values.ackText.trim() } : {}),
+                ...(values.queryBusinessCategory.trim()
+                  ? { business_category: values.queryBusinessCategory.trim() }
+                  : {}),
               },
             },
           ]
@@ -52,12 +74,21 @@ export function buildCreateRuleInput(values: SimpleRuleFormValues): CreateRuleIn
 
 /** Reverse of buildCreateRuleInput — populates the edit form from an existing rule. */
 export function ruleToFormValues(rule: Rule): SimpleRuleFormValues {
-  const condition = rule.conditions[0];
+  const isBulk = isBulkCsvRule(rule);
+  // The bulk rule's *primary* (user-facing) condition is whichever one isn't
+  // the synthetic has_csv_attachment marker buildCreateRuleInput appended.
+  const condition = isBulk
+    ? rule.conditions.find((c) => c.field !== HAS_CSV_ATTACHMENT_FIELD)
+    : rule.conditions[0];
   const sendText = rule.actions.find((action) => action.type === "send_text");
   const runScript = rule.actions.find((action) => action.type === "run_script");
+  const queryTraslado = rule.actions.find((action) => action.type === "query_traslado_status");
   const replyText = sendText ? String(sendText.params.text ?? "") : "";
   const scriptSource = runScript ? String(runScript.params.script ?? "") : "";
   const ackText = runScript ? String(runScript.params.ack_text ?? "") : "";
+  const queryBusinessCategory = queryTraslado
+    ? String(queryTraslado.params.business_category ?? "")
+    : "";
 
   const base: SimpleRuleFormValues = {
     name: rule.name,
@@ -67,11 +98,18 @@ export function ruleToFormValues(rule: Rule): SimpleRuleFormValues {
     senderValue: "",
     isGroupValue: "true",
     textValue: "",
-    actionType: runScript ? "run_script" : "send_text",
+    actionType: isBulk
+      ? "run_script_bulk"
+      : queryTraslado
+        ? "query_traslado_status"
+        : runScript
+          ? "run_script"
+          : "send_text",
     replyText,
     scriptSource,
     scriptFileName: scriptSource ? "script.py (cargado)" : "",
     ackText,
+    queryBusinessCategory,
   };
 
   if (!condition) return base;
@@ -84,6 +122,13 @@ export function ruleToFormValues(rule: Rule): SimpleRuleFormValues {
     default:
       return { ...base, field: "sender", senderValue: String(condition.value ?? "") };
   }
+}
+
+/** Whether a rule is the dashboard-authored "bulk CSV" variant — see
+ * ActionKind's doc comment. Used by RulesTable to badge it distinctly from a
+ * plain run_script rule sharing the same trigger text. */
+export function isBulkCsvRule(rule: Rule): boolean {
+  return rule.conditions.some((c) => c.field === HAS_CSV_ATTACHMENT_FIELD);
 }
 
 export function summarizeCondition(condition: RuleCondition): string {
@@ -107,6 +152,10 @@ export function summarizeRuleActions(rule: Rule): string {
   const runScript = rule.actions.find((action) => action.type === "run_script");
   if (runScript) {
     return "Ejecuta un script Python";
+  }
+  const queryTraslado = rule.actions.find((action) => action.type === "query_traslado_status");
+  if (queryTraslado) {
+    return "Consulta el estado de un traslado";
   }
   return rule.actions.map((action) => action.type).join(", ") || "—";
 }

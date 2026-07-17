@@ -116,38 +116,63 @@ class RuleActionSchema(BaseModel):
 
     @model_validator(mode="after")
     def validate_run_script(self) -> RuleActionSchema:
+        if self.type is ActionType.QUERY_TRASLADO_STATUS:
+            business_category = self.params.get("business_category")
+            if business_category is not None and not isinstance(business_category, str):
+                raise ValueError("La categoría de negocio a consultar debe ser un texto.")
+            return self
+
         if self.type is not ActionType.RUN_SCRIPT:
             return self
 
         script = self.params.get("script")
         if not isinstance(script, str) or not script.strip():
-            raise ValueError("run_script action requires a non-empty string params.script")
+            raise ValueError("Falta el código del script — pegalo o subí un archivo .py.")
 
         max_bytes = get_settings().SCRIPT_MAX_SOURCE_BYTES
         if len(script.encode("utf-8")) > max_bytes:
-            raise ValueError(f"script exceeds the maximum allowed size ({max_bytes} bytes)")
+            raise ValueError(
+                f"El script supera el tamaño máximo permitido ({max_bytes} bytes). "
+                "Reducilo y volvé a intentar."
+            )
 
         try:
             tree = ast.parse(script)
         except SyntaxError as error:
-            raise ValueError(f"script has invalid Python syntax: {error}") from error
+            raise ValueError(
+                f"El script tiene un error de sintaxis de Python y no se puede usar: {error}. "
+                "Revisá esa línea y volvé a intentar."
+            ) from error
 
         if not any(
             isinstance(node, ast.FunctionDef) and node.name == "handle" for node in tree.body
         ):
-            raise ValueError("script must define a top-level `def handle(message):`")
+            raise ValueError(
+                "Al script le falta la función `def handle(message):` que esta plataforma "
+                "necesita para ejecutarlo — así es como se le entrega el mensaje entrante y "
+                'se espera la respuesta (por ejemplo: return {"reply_text": "..."}). Esto '
+                "suele pasar cuando se sube un script pensado para correr directo en una "
+                "computadora (que abre su propio navegador, lee archivos locales, o espera "
+                "que apretés Enter) en vez de uno adaptado para ejecutarse automáticamente "
+                "al llegar un mensaje de WhatsApp. Envolvé toda la lógica dentro de esa "
+                "función antes de volver a subirlo."
+            )
 
         for pattern in _RUN_SCRIPT_DENYLIST:
             if pattern in script:
-                raise ValueError(f"script contains a disallowed pattern: {pattern!r}")
+                raise ValueError(
+                    f"El script usa una instrucción que no está permitida por seguridad: "
+                    f"{pattern}. Quitala del script y volvé a intentar."
+                )
 
         if not security_settings.get_allow_hardcoded_script_secrets():
             secret_label = _find_hardcoded_secret(script)
             if secret_label is not None:
                 raise ValueError(
-                    f"script appears to contain a hardcoded credential ({secret_label}); "
-                    "reference it by name in params.secrets and read it via "
-                    "os.environ instead of embedding the literal value"
+                    f"El script parece tener una credencial real escrita directamente en el "
+                    f"código ({secret_label}). Por seguridad no está permitido: guardala como "
+                    "secreto (sección Integraciones) y referenciala por nombre en el script "
+                    "(se lee con os.environ) en vez de escribir el valor real."
                 )
 
         secret_names = self.params.get("secrets")
@@ -155,21 +180,24 @@ class RuleActionSchema(BaseModel):
             if not isinstance(secret_names, list) or not all(
                 isinstance(item, str) for item in secret_names
             ):
-                raise ValueError("run_script action params.secrets must be a list of strings")
+                raise ValueError(
+                    "La lista de secretos del script no tiene el formato correcto — debe ser "
+                    "una lista de nombres de texto."
+                )
             for item in secret_names:
                 if not _SECRET_NAME_PATTERN.match(item):
                     raise ValueError(
-                        f"params.secrets contains an invalid name: {item!r} "
-                        "(must match a stored secret's UPPER_SNAKE_CASE name)"
+                        f"El nombre de secreto '{item}' no es válido — debe estar en "
+                        "MAYÚSCULAS_CON_GUION_BAJO y coincidir con un secreto ya guardado."
                     )
 
         ack_text = self.params.get("ack_text")
         if ack_text is not None:
             if not isinstance(ack_text, str):
-                raise ValueError("run_script action params.ack_text must be a string when present")
+                raise ValueError("El mensaje inmediato (ack_text) debe ser un texto.")
             if len(ack_text) > 4096:
                 raise ValueError(
-                    "run_script action params.ack_text must be at most 4096 characters"
+                    "El mensaje inmediato (ack_text) no puede superar los 4096 caracteres."
                 )
 
         return self

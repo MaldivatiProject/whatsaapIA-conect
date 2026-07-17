@@ -4,6 +4,19 @@ import Link from "next/link";
 import type { ComponentType } from "react";
 import { useMemo, useState } from "react";
 import {
+  Area,
+  AreaChart,
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Label as RechartsLabel,
+  PolarRadiusAxis,
+  RadialBar,
+  RadialBarChart,
+  XAxis,
+  YAxis,
+} from "recharts";
+import {
   AlertTriangle,
   BarChart3,
   Bot,
@@ -37,6 +50,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/shared/components/ui/card";
+import {
+  ChartContainer,
+  ChartLegend,
+  ChartLegendContent,
+  ChartTooltip,
+  ChartTooltipContent,
+  type ChartConfig,
+} from "@/shared/components/ui/chart";
 import { Label } from "@/shared/components/ui/label";
 import {
   Select,
@@ -172,20 +193,47 @@ function MetricCard({
   );
 }
 
-function RateBar({ label, value, tone }: { label: string; value: number; tone: string }) {
+function RateGauge({ label, value, color }: { label: string; value: number; color: string }) {
   const clamped = Math.max(0, Math.min(100, value));
+  const data = [{ name: label, value: clamped, fill: color }];
+  const config = { value: { label, color } } satisfies ChartConfig;
+
   return (
-    <div className="space-y-1.5">
-      <div className="flex items-center justify-between gap-3 text-sm">
-        <span className="text-muted-foreground">{label}</span>
-        <span className="font-medium">{percent(value)}</span>
-      </div>
-      <div className="h-2 overflow-hidden rounded-full bg-muted">
-        <div className={cn("h-full rounded-full", tone)} style={{ width: `${clamped}%` }} />
-      </div>
+    <div className="flex flex-col items-center gap-1">
+      <ChartContainer config={config} className="mx-auto aspect-square h-28 w-28">
+        <RadialBarChart
+          data={data}
+          startAngle={90}
+          endAngle={-270}
+          innerRadius="72%"
+          outerRadius="100%"
+        >
+          <RadialBar dataKey="value" cornerRadius={999} background={{ fill: "var(--muted)" }} />
+          <PolarRadiusAxis tick={false} tickLine={false} axisLine={false} domain={[0, 100]}>
+            <RechartsLabel
+              content={({ viewBox }) => {
+                if (!viewBox || !("cx" in viewBox) || !("cy" in viewBox)) return null;
+                return (
+                  <text x={viewBox.cx} y={viewBox.cy} textAnchor="middle" dominantBaseline="middle">
+                    <tspan x={viewBox.cx} y={viewBox.cy} className="fill-foreground text-lg font-semibold">
+                      {percent(clamped)}
+                    </tspan>
+                  </text>
+                );
+              }}
+            />
+          </PolarRadiusAxis>
+        </RadialBarChart>
+      </ChartContainer>
+      <span className="text-center text-xs text-muted-foreground">{label}</span>
     </div>
   );
 }
+
+const VOLUME_CHART_CONFIG = {
+  processed_messages: { label: "Procesados", color: "var(--chart-3)" },
+  matched_messages: { label: "Con regla", color: "var(--chart-1)" },
+} satisfies ChartConfig;
 
 function VolumeChart({
   points,
@@ -194,9 +242,6 @@ function VolumeChart({
   points: OverviewTimeseriesPoint[];
   bucket: OverviewBucket;
 }) {
-  const max = Math.max(1, ...points.map((point) => point.processed_messages));
-  const columns = `repeat(${Math.max(points.length, 1)}, minmax(18px, 1fr))`;
-
   if (points.length === 0) {
     return (
       <p className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
@@ -205,58 +250,69 @@ function VolumeChart({
     );
   }
 
+  const data = points.map((point) => ({
+    ...point,
+    label: compactDate(point.bucket_start, bucket),
+  }));
+
   return (
-    <div className="overflow-x-auto">
-      <div className="min-w-[560px] space-y-3">
-        <div
-          className="grid h-56 items-end gap-2 border-b pb-2"
-          style={{ gridTemplateColumns: columns }}
-          aria-label="Mensajes procesados y con regla por periodo"
-        >
-          {points.map((point) => {
-            const processedHeight = (point.processed_messages / max) * 100;
-            const matchedHeight = (point.matched_messages / max) * 100;
-            return (
-              <div
-                key={point.bucket_start}
-                className="relative flex h-full items-end"
-                title={`${compactDate(point.bucket_start, bucket)}: ${number(
-                  point.processed_messages,
-                )} procesados`}
-              >
-                <div
-                  className="absolute bottom-0 w-full rounded-t-md bg-chart-3/25"
-                  style={{ height: `${Math.max(processedHeight, 2)}%` }}
-                />
-                <div
-                  className="relative w-full rounded-t-md bg-primary"
-                  style={{ height: `${Math.max(matchedHeight, point.matched_messages ? 2 : 0)}%` }}
-                />
-              </div>
-            );
-          })}
-        </div>
-        <div className="grid gap-2 text-[11px] text-muted-foreground" style={{ gridTemplateColumns: columns }}>
-          {points.map((point, index) => (
-            <span key={point.bucket_start} className="truncate text-center">
-              {index % Math.ceil(points.length / 8) === 0
-                ? compactDate(point.bucket_start, bucket)
-                : ""}
-            </span>
-          ))}
-        </div>
-        <div className="flex flex-wrap items-center gap-4 text-xs text-muted-foreground">
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-sm bg-chart-3/40" aria-hidden />
-            Procesados
-          </span>
-          <span className="inline-flex items-center gap-1.5">
-            <span className="h-2.5 w-2.5 rounded-sm bg-primary" aria-hidden />
-            Con regla
-          </span>
-        </div>
-      </div>
-    </div>
+    <ChartContainer config={VOLUME_CHART_CONFIG} className="aspect-auto h-72 w-full">
+      <AreaChart data={data} margin={{ left: 4, right: 12, top: 8 }}>
+        <defs>
+          <linearGradient id="fill-processed_messages" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor="var(--color-processed_messages)" stopOpacity={0.35} />
+            <stop offset="95%" stopColor="var(--color-processed_messages)" stopOpacity={0.02} />
+          </linearGradient>
+          <linearGradient id="fill-matched_messages" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor="var(--color-matched_messages)" stopOpacity={0.55} />
+            <stop offset="95%" stopColor="var(--color-matched_messages)" stopOpacity={0.05} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid vertical={false} strokeDasharray="3 3" />
+        <XAxis
+          dataKey="label"
+          tickLine={false}
+          axisLine={false}
+          tickMargin={10}
+          minTickGap={32}
+          className="text-xs"
+        />
+        <YAxis
+          tickLine={false}
+          axisLine={false}
+          width={40}
+          tickMargin={6}
+          tickFormatter={(value: number) => number(value)}
+          className="text-xs"
+        />
+        <ChartTooltip
+          cursor={{ stroke: "var(--border)", strokeWidth: 1 }}
+          content={
+            <ChartTooltipContent
+              indicator="dot"
+              labelFormatter={(_, payload) =>
+                payload?.[0]?.payload ? compactDate(payload[0].payload.bucket_start, bucket) : ""
+              }
+            />
+          }
+        />
+        <Area
+          dataKey="processed_messages"
+          type="monotone"
+          stroke="var(--color-processed_messages)"
+          fill="url(#fill-processed_messages)"
+          strokeWidth={2}
+        />
+        <Area
+          dataKey="matched_messages"
+          type="monotone"
+          stroke="var(--color-matched_messages)"
+          fill="url(#fill-matched_messages)"
+          strokeWidth={2}
+        />
+        <ChartLegend content={<ChartLegendContent />} />
+      </AreaChart>
+    </ChartContainer>
   );
 }
 
@@ -267,6 +323,7 @@ function RankedBars<T extends OverviewCategory | OverviewRule>({
   getValue,
   getMeta,
   empty,
+  color = "var(--chart-4)",
 }: {
   items: T[];
   getKey: (item: T) => string;
@@ -274,9 +331,8 @@ function RankedBars<T extends OverviewCategory | OverviewRule>({
   getValue: (item: T) => number;
   getMeta: (item: T) => string;
   empty: string;
+  color?: string;
 }) {
-  const max = Math.max(1, ...items.map(getValue));
-
   if (items.length === 0) {
     return (
       <p className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
@@ -285,27 +341,52 @@ function RankedBars<T extends OverviewCategory | OverviewRule>({
     );
   }
 
+  const data = items.map((item) => ({
+    key: getKey(item),
+    label: getLabel(item),
+    value: getValue(item),
+    meta: getMeta(item),
+  }));
+  const config = { value: { label: "Total", color } } satisfies ChartConfig;
+
   return (
-    <div className="space-y-4">
-      {items.map((item) => {
-        const value = getValue(item);
-        return (
-          <div key={getKey(item)} className="space-y-1.5">
-            <div className="flex items-center justify-between gap-3 text-sm">
-              <span className="truncate font-medium capitalize">{getLabel(item)}</span>
-              <span className="shrink-0 text-muted-foreground">{number(value)}</span>
-            </div>
-            <div className="h-2 overflow-hidden rounded-full bg-muted">
-              <div
-                className="h-full rounded-full bg-chart-4"
-                style={{ width: `${Math.max((value / max) * 100, 4)}%` }}
-              />
-            </div>
-            <p className="truncate text-xs text-muted-foreground">{getMeta(item)}</p>
-          </div>
-        );
-      })}
-    </div>
+    <ChartContainer
+      config={config}
+      className="aspect-auto w-full"
+      style={{ height: Math.max(data.length * 40, 120) }}
+    >
+      <BarChart data={data} layout="vertical" margin={{ left: 0, right: 12 }}>
+        <CartesianGrid horizontal={false} strokeDasharray="3 3" />
+        <XAxis type="number" hide />
+        <YAxis
+          type="category"
+          dataKey="label"
+          tickLine={false}
+          axisLine={false}
+          width={132}
+          tickFormatter={(value: string) => (value.length > 20 ? `${value.slice(0, 20)}…` : value)}
+          className="text-xs capitalize"
+        />
+        <ChartTooltip
+          cursor={{ fill: "var(--muted)" }}
+          content={
+            <ChartTooltipContent
+              hideLabel
+              formatter={(value, _name, item) => (
+                <div className="flex w-full flex-col gap-0.5">
+                  <div className="flex items-center justify-between gap-3 font-medium text-foreground">
+                    <span className="capitalize">{item?.payload?.label}</span>
+                    <span className="font-mono tabular-nums">{number(Number(value))}</span>
+                  </div>
+                  <span className="text-muted-foreground">{item?.payload?.meta}</span>
+                </div>
+              )}
+            />
+          }
+        />
+        <Bar dataKey="value" fill="var(--color-value)" radius={[0, 6, 6, 0]} maxBarSize={22} />
+      </BarChart>
+    </ChartContainer>
   );
 }
 
@@ -319,9 +400,23 @@ function StatusBreakdown({ overview }: { overview: OverviewPayload }) {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
-        <RateBar label="Coincidencia de reglas" value={overview.totals.match_rate} tone="bg-primary" />
-        <RateBar label="Respuestas creadas" value={overview.totals.reply_rate} tone="bg-success" />
-        <RateBar label="Fallos" value={overview.totals.failure_rate} tone="bg-destructive" />
+        <div className="grid grid-cols-3 gap-2">
+          <RateGauge
+            label="Coincidencia de reglas"
+            value={overview.totals.match_rate}
+            color="var(--chart-1)"
+          />
+          <RateGauge
+            label="Respuestas creadas"
+            value={overview.totals.reply_rate}
+            color="var(--success)"
+          />
+          <RateGauge
+            label="Fallos"
+            value={overview.totals.failure_rate}
+            color="var(--destructive)"
+          />
+        </div>
 
         <div className="flex flex-wrap gap-2 border-t pt-4">
           {overview.statuses.map((item) => (
@@ -671,6 +766,7 @@ export function OverviewDashboard() {
                     )} respuestas`
                   }
                   empty="Sin reglas ejecutadas en el rango."
+                  color="var(--chart-5)"
                 />
               </CardContent>
             </Card>

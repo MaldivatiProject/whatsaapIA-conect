@@ -3,7 +3,9 @@ shared/filters so both services return a consistent error shape to clients."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
+from typing import Any
 from uuid import uuid4
 
 import structlog
@@ -16,6 +18,51 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from whatsaap_backend.domain.rule_engine import InvalidRuleError
 
 logger = structlog.get_logger(__name__)
+
+# Locations pydantic always prepends that mean nothing to whoever is reading
+# the error in the dashboard (which HTTP part it came from) — never the
+# useful part of the path, so always dropped.
+_UNINFORMATIVE_LOC_SEGMENTS = {"body", "query", "path", "header", "cookie"}
+
+# Real field names, but ones the dashboard never surfaces by that name (it
+# just shows a single "Condición"/"Acción" per rule) — prefixing an already
+# complete Spanish sentence with the raw English JSON field name reads as
+# noise rather than context, so it's dropped rather than translated.
+_OPAQUE_FIELD_NAMES = {"actions", "conditions"}
+
+
+def _format_validation_errors(errors: Sequence[Mapping[str, Any]]) -> str:
+    """Turns FastAPI/pydantic's raw error list into a readable message —
+    the default `str(exc.errors())` dumps Python dict/tuple repr syntax
+    (loc tuples, ctx with a nested exception object, a pydantic docs URL),
+    which reads as noise rather than a usable error to someone editing a
+    rule in the dashboard.
+    """
+    messages = []
+    for error in errors:
+        raw_loc = error.get("loc", ())
+        loc = [str(part) for part in raw_loc if part not in _UNINFORMATIVE_LOC_SEGMENTS]
+        # List indices (the "0" in "actions.0") don't mean anything to
+        # someone editing a single rule/action in the dashboard.
+        field_path = ".".join(part for part in loc if not part.isdigit())
+        # Pydantic v2 prefixes every custom validator's raised ValueError
+        # message with "Value error, " — redundant once shown as an error.
+        msg = str(error.get("msg", "")).removeprefix("Value error, ")
+        # Only drop an opaque field name for "value_error" (a raised
+        # ValueError from one of this codebase's own validators) — by
+        # convention those messages are already complete sentences that
+        # don't need field context. Built-in pydantic constraint messages
+        # (e.g. "List should have at least 1 item...") don't repeat the
+        # field name themselves, so the prefix is the only way to know
+        # *which* field that refers to and must stay.
+        drop_prefix = error.get("type") == "value_error" and (
+            not field_path or field_path in _OPAQUE_FIELD_NAMES
+        )
+        if drop_prefix or not field_path:
+            messages.append(msg)
+        else:
+            messages.append(f"{field_path}: {msg}")
+    return "; ".join(messages) or "Solicitud inválida"
 
 
 class ProblemDetailsError(Exception):
@@ -106,7 +153,10 @@ def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(RequestValidationError)
     async def _validation_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
         return _problem_response(
-            request, status.HTTP_422_UNPROCESSABLE_ENTITY, "ValidationError", str(exc.errors())
+            request,
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            "ValidationError",
+            _format_validation_errors(exc.errors()),
         )
 
     @app.exception_handler(StarletteHTTPException)

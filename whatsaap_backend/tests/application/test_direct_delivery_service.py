@@ -11,6 +11,7 @@ from whatsaap_backend.config import Settings
 from whatsaap_backend.domain.models import (
     ActionType,
     BusinessMessage,
+    BusinessMessageOrigin,
     BusinessRule,
     Condition,
     ConditionOperator,
@@ -106,10 +107,18 @@ class _FakeExecutions:
 class _FakeBusinessMessages:
     def __init__(self) -> None:
         self.added: list[BusinessMessage] = []
+        self.find_results: list[BusinessMessage] = []
+        self.find_calls: list[tuple[str, str, str]] = []
 
     async def add(self, message: BusinessMessage) -> BusinessMessage:
         self.added.append(message)
         return message
+
+    async def find_recent_by_correo(
+        self, tenant_id: str, business_category: str, correo: str, *, limit: int = 20
+    ) -> list[BusinessMessage]:
+        self.find_calls.append((tenant_id, business_category, correo))
+        return self.find_results
 
 
 class _FakeSecrets:
@@ -272,6 +281,15 @@ def _reply_rule(
     )
 
 
+def _query_traslado_rule(target_sender: str, params: dict[str, Any] | None = None) -> BusinessRule:
+    return BusinessRule(
+        tenant_id="acme",
+        name="consultar-traslado",
+        conditions=(Condition("sender", ConditionOperator.EQUALS, target_sender),),
+        actions=(RuleAction(ActionType.QUERY_TRASLADO_STATUS, params or {}),),
+    )
+
+
 async def test_matching_rule_sends_rendered_reply_through_connector() -> None:
     sender = "573243744739@s.whatsapp.net"
     uow = _FakeUow([_reply_rule(sender)])
@@ -400,7 +418,11 @@ async def test_run_script_action_persists_business_data() -> None:
     assert len(uow.business_messages.added) == 1
     added = uow.business_messages.added[0]
     assert added.business_category == "traslado_tienda"
-    assert added.metadata == {"PROMOTOR": "WOMER", "CEDULA": "1023031587"}
+    assert added.metadata["PROMOTOR"] == "WOMER"
+    assert added.metadata["CEDULA"] == "1023031587"
+    # Stamped so a later "CONSULTAR TRASLADO TIENDA" query can report when it
+    # was requested, separately from BusinessMessage.received_at (completed).
+    assert "solicitado_at" in added.metadata
     assert added.sender == sender
     assert fake_sender.sent == []  # no reply_text was returned, nothing sent
     assert len(fake_sandbox.calls) == 1
@@ -618,3 +640,105 @@ async def test_non_csv_attachment_does_not_trigger_bulk_mode_in_direct_mode() ->
     # Falls through to the normal single-script path — one sandbox call, one reply.
     assert len(fake_sandbox.calls) == 1
     assert fake_sender.sent[0]["text"] == "ok"
+
+
+async def test_query_traslado_status_replies_with_the_found_record() -> None:
+    sender = "573243744739@s.whatsapp.net"
+    uow = _FakeUow([_query_traslado_rule(sender)])
+    uow.business_messages.find_results = [
+        BusinessMessage(
+            tenant_id="acme",
+            source_origin=BusinessMessageOrigin.WHATSAPP,
+            business_category="traslado_tienda",
+            metadata={
+                "resultado": "GUARDADO",
+                "CORREO": "ana@example.com",
+                "NUEVA_TIENDA": "Kiosco",
+            },
+        )
+    ]
+    fake_sender = _FakeSender()
+
+    await ProcessIncomingMessageDirectService(_FakeFactory(uow), fake_sender).execute(
+        _message(text="CONSULTAR TRASLADO TIENDA\nCORREO ana@example.com", sender=sender)
+    )
+
+    assert uow.business_messages.find_calls == [("acme", "traslado_tienda", "ana@example.com")]
+    assert len(fake_sender.sent) == 1
+    assert "Estado: Completado" in fake_sender.sent[0]["text"]
+    assert "Nueva tienda: Kiosco" in fake_sender.sent[0]["text"]
+
+
+async def test_query_traslado_status_reports_last_success_despite_a_later_failed_retry() -> None:
+    sender = "573243744739@s.whatsapp.net"
+    uow = _FakeUow([_query_traslado_rule(sender)])
+    uow.business_messages.find_results = [
+        BusinessMessage(
+            tenant_id="acme",
+            source_origin=BusinessMessageOrigin.WHATSAPP,
+            business_category="traslado_tienda",
+            metadata={"resultado": "TIENDA_NO_ENCONTRADA", "CORREO": "ana@example.com"},
+            received_at=datetime(2026, 7, 16, 12, 0, tzinfo=UTC),
+        ),
+        BusinessMessage(
+            tenant_id="acme",
+            source_origin=BusinessMessageOrigin.WHATSAPP,
+            business_category="traslado_tienda",
+            metadata={
+                "resultado": "YA_CORRECTA",
+                "CORREO": "ana@example.com",
+                "NUEVA_TIENDA": "Kiosco",
+            },
+            received_at=datetime(2026, 7, 15, 12, 0, tzinfo=UTC),
+        ),
+    ]
+    fake_sender = _FakeSender()
+
+    await ProcessIncomingMessageDirectService(_FakeFactory(uow), fake_sender).execute(
+        _message(text="CONSULTAR TRASLADO TIENDA\nCORREO ana@example.com", sender=sender)
+    )
+
+    sent_text = fake_sender.sent[0]["text"]
+    assert "Estado: Completado (último éxito registrado)" in sent_text
+    assert "Nueva tienda: Kiosco" in sent_text
+    assert "Hubo 1 intento(s) fallido(s)" in sent_text
+    assert "tienda no encontrada" in sent_text
+
+
+async def test_query_traslado_status_replies_not_found_when_no_record_matches() -> None:
+    sender = "573243744739@s.whatsapp.net"
+    uow = _FakeUow([_query_traslado_rule(sender)])
+    fake_sender = _FakeSender()
+
+    await ProcessIncomingMessageDirectService(_FakeFactory(uow), fake_sender).execute(
+        _message(text="CONSULTAR TRASLADO TIENDA\nCORREO nadie@example.com", sender=sender)
+    )
+
+    assert fake_sender.sent[0]["text"] == (
+        "No encontramos ningún traslado registrado para el correo nadie@example.com."
+    )
+
+
+async def test_query_traslado_status_without_an_email_asks_for_one() -> None:
+    sender = "573243744739@s.whatsapp.net"
+    uow = _FakeUow([_query_traslado_rule(sender)])
+    fake_sender = _FakeSender()
+
+    await ProcessIncomingMessageDirectService(_FakeFactory(uow), fake_sender).execute(
+        _message(text="CONSULTAR TRASLADO TIENDA", sender=sender)
+    )
+
+    assert uow.business_messages.find_calls == []
+    assert "correo" in fake_sender.sent[0]["text"].lower()
+
+
+async def test_query_traslado_status_honors_a_custom_business_category() -> None:
+    sender = "573243744739@s.whatsapp.net"
+    uow = _FakeUow([_query_traslado_rule(sender, params={"business_category": "otro_flujo"})])
+    fake_sender = _FakeSender()
+
+    await ProcessIncomingMessageDirectService(_FakeFactory(uow), fake_sender).execute(
+        _message(text="CONSULTAR TRASLADO TIENDA\nCORREO ana@example.com", sender=sender)
+    )
+
+    assert uow.business_messages.find_calls == [("acme", "otro_flujo", "ana@example.com")]

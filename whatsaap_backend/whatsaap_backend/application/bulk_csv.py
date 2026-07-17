@@ -203,12 +203,8 @@ def format_bulk_summary(
     return "\n".join(lines)
 
 
-CSV_MIME_TYPES = frozenset({"text/csv", "application/csv", "application/vnd.ms-excel"})
-
-
 def is_csv_attachment(attachment: MessageAttachment | None) -> bool:
-    if attachment is None:
-        return False
-    if attachment.mime_type.lower() in CSV_MIME_TYPES:
-        return True
-    return bool(attachment.file_name and attachment.file_name.lower().endswith(".csv"))
+    """Thin wrapper kept for call-site readability — the actual check is pure
+    domain logic (see MessageAttachment.is_csv_like), reused by the rule
+    engine's has_csv_attachment condition."""
+    return attachment is not None and attachment.is_csv_like

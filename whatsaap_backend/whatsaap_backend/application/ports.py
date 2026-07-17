@@ -55,6 +55,12 @@ class ContactIdentityRepository(Protocol):
 class BusinessMessageRepository(Protocol):
     async def add(self, message: BusinessMessage) -> BusinessMessage: ...
 
+    # Defined before `list` below — a method named `list` shadows the builtin
+    # `list[...]` for every annotation written after it in this class body.
+    async def find_recent_by_correo(
+        self, tenant_id: str, business_category: str, correo: str, *, limit: int = 20
+    ) -> list[BusinessMessage]: ...
+
     async def list(
         self,
         tenant_id: str,

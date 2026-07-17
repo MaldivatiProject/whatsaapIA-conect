@@ -130,6 +130,33 @@ def test_rejects_rule_with_no_conditions() -> None:
     response = client.post("/api/v1/rules", json=payload, headers=_headers())
 
     assert response.status_code == 422
+    # Readable message, not pydantic's raw repr dump (loc tuples, ctx, docs URL).
+    assert "conditions" in response.json()["detail"]
+    assert "loc" not in response.json()["detail"]
+
+
+def test_run_script_missing_handle_function_returns_a_readable_error() -> None:
+    client = _client()
+    payload = {
+        **_RULE_PAYLOAD,
+        "actions": [
+            {
+                "type": "run_script",
+                "params": {"script": "print('no handle function here')"},
+            }
+        ],
+    }
+
+    response = client.post("/api/v1/rules", json=payload, headers=_headers())
+
+    assert response.status_code == 422
+    detail = response.json()["detail"]
+    # No "actions.0:" prefix — the message itself is already a complete,
+    # actionable sentence, and that field path means nothing in the dashboard.
+    assert detail.startswith("Al script le falta la función `def handle(message):`")
+    assert "ctx" not in detail
+    assert "errors.pydantic.dev" not in detail
+    assert "errors.pydantic.dev" not in detail
 
 
 def test_get_nonexistent_rule_returns_404() -> None:

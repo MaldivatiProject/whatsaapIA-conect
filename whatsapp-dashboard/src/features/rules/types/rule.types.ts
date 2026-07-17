@@ -23,7 +23,7 @@ export interface RuleCondition {
 }
 
 export interface RuleAction {
-  type: "send_text" | "set_state" | "noop" | "run_script";
+  type: "send_text" | "set_state" | "noop" | "run_script" | "query_traslado_status";
   params: Record<string, unknown>;
 }
 
@@ -50,6 +50,7 @@ export interface CreateRuleInput {
   actions: RuleAction[];
   session_id?: string | null;
   priority?: number;
+  stop_on_match?: boolean;
 }
 
 export interface UpdateRuleInput {
@@ -59,9 +60,20 @@ export interface UpdateRuleInput {
   conditions?: RuleCondition[];
   actions?: RuleAction[];
   priority?: number;
+  stop_on_match?: boolean;
 }
 
-export type ActionKind = "send_text" | "run_script";
+/** "run_script_bulk" is a dashboard-only authoring shortcut — it still saves
+ * as a normal `run_script` RuleAction, but buildCreateRuleInput additionally
+ * appends a `has_csv_attachment` condition and sets stop_on_match, so this
+ * rule only fires (and takes priority over a plain run_script rule sharing
+ * the same trigger text) when the inbound message carries a CSV. See
+ * lib/mapping.ts. */
+export type ActionKind =
+  | "send_text"
+  | "run_script"
+  | "run_script_bulk"
+  | "query_traslado_status";
 
 /** The simplified single-condition shape the dashboard's form authors. */
 export interface SimpleRuleFormValues {
@@ -81,4 +93,6 @@ export interface SimpleRuleFormValues {
   scriptFileName: string;
   /** Mensaje inmediato enviado al matchear la regla, antes de correr el script. Vacío = default del backend; "off" = sin ack. */
   ackText: string;
+  /** query_traslado_status only — categoría de negocio a consultar. Vacío = "traslado_tienda" (default del backend). */
+  queryBusinessCategory: string;
 }

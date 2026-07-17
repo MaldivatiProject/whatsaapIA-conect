@@ -406,6 +406,25 @@ class SqlAlchemyBusinessMessageRepository:
         await self._session.flush()
         return self._to_domain(model)
 
+    # Defined before `list` below — a method named `list` shadows the builtin
+    # `list[...]` for every annotation written after it in this class body.
+    async def find_recent_by_correo(
+        self, tenant_id: str, business_category: str, correo: str, *, limit: int = 20
+    ) -> list[BusinessMessage]:
+        statement = (
+            select(BusinessMessageModel)
+            .where(
+                BusinessMessageModel.tenant_id == tenant_id,
+                BusinessMessageModel.business_category == business_category,
+                BusinessMessageModel.expiration_date.is_(None),
+                func.lower(BusinessMessageModel.metadata_json["CORREO"].astext) == correo.lower(),
+            )
+            .order_by(BusinessMessageModel.received_at.desc())
+            .limit(limit)
+        )
+        models = (await self._session.scalars(statement)).all()
+        return [self._to_domain(model) for model in models]
+
     async def list(
         self,
         tenant_id: str,

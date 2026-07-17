@@ -9,6 +9,7 @@ import {
   MessageCircle,
   Pencil,
   Reply,
+  Search,
   type LucideIcon,
 } from "lucide-react";
 import { Badge } from "@/shared/components/ui/badge";
@@ -84,6 +85,7 @@ export function RuleDetailPanel({ rule, onSave, isSaving }: RuleDetailPanelProps
 
   const sendText = rule.actions.find((action) => action.type === "send_text");
   const runScript = rule.actions.find((action) => action.type === "run_script");
+  const queryTraslado = rule.actions.find((action) => action.type === "query_traslado_status");
   const ackText = runScript ? String(runScript.params.ack_text ?? "") : "";
   const conditionIcon = conditionFieldIcon(rule.conditions[0]?.field);
 
@@ -133,7 +135,7 @@ export function RuleDetailPanel({ rule, onSave, isSaving }: RuleDetailPanelProps
           aria-hidden="true"
         />
 
-        <SectionCard icon={runScript ? Code2 : Reply} label="Entonces">
+        <SectionCard icon={runScript ? Code2 : queryTraslado ? Search : Reply} label="Entonces">
           {sendText && <p className="text-sm whitespace-pre-wrap">{String(sendText.params.text ?? "")}</p>}
           {runScript && (
             <div className="space-y-2">
@@ -150,7 +152,20 @@ export function RuleDetailPanel({ rule, onSave, isSaving }: RuleDetailPanelProps
               </div>
             </div>
           )}
-          {!sendText && !runScript && <p className="text-sm text-muted-foreground">—</p>}
+          {queryTraslado && (
+            <div className="space-y-2">
+              <Badge variant="outline" className="gap-1">
+                <Search className="h-3 w-3" aria-hidden="true" />
+                Consulta estado de traslado
+              </Badge>
+              <p className="text-sm text-muted-foreground">
+                Categoría: {String(queryTraslado.params.business_category ?? "traslado_tienda")}
+              </p>
+            </div>
+          )}
+          {!sendText && !runScript && !queryTraslado && (
+            <p className="text-sm text-muted-foreground">—</p>
+          )}
         </SectionCard>
       </div>
     </div>

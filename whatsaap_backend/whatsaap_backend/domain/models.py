@@ -24,6 +24,7 @@ class ActionType(StrEnum):
     SET_STATE = "set_state"
     NOOP = "noop"
     RUN_SCRIPT = "run_script"
+    QUERY_TRASLADO_STATUS = "query_traslado_status"
 
 
 class BusinessMessageOrigin(StrEnum):
@@ -76,6 +77,9 @@ class BusinessRule:
         return self.enabled and self.expiration_date is None
 
 
+_CSV_MIME_TYPES = frozenset({"text/csv", "application/csv", "application/vnd.ms-excel"})
+
+
 @dataclass(frozen=True, slots=True)
 class MessageAttachment:
     """A downloaded, base64-encoded inbound document (see whatsapp-connector's
@@ -105,6 +109,15 @@ class MessageAttachment:
             base64_content=base64_content,
             file_name=file_name if isinstance(file_name, str) else None,
         )
+
+    @property
+    def is_csv_like(self) -> bool:
+        """Whether this attachment looks like a CSV — by mimetype or filename
+        extension. Pure domain logic (no infra dependency) so the rule
+        engine's `has_csv_attachment` condition can use it directly."""
+        if self.mime_type.lower() in _CSV_MIME_TYPES:
+            return True
+        return bool(self.file_name and self.file_name.lower().endswith(".csv"))
 
 
 @dataclass(frozen=True, slots=True)

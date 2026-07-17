@@ -29,6 +29,7 @@ ALLOWED_FIELDS = {
     "session_id",
     "conversation_id",
     "state",
+    "has_csv_attachment",
 }
 # Extra placeholders usable in templates (send_text/run_script ack_text) but
 # not meaningful as rule condition fields, so kept out of ALLOWED_FIELDS.
@@ -100,6 +101,9 @@ class RuleEvaluator:
             "session_id": message.session_id,
             "conversation_id": message.conversation_id,
             "state": dict(state),
+            # Lets a rule require a CSV attachment (e.g. "Traslado de tienda
+            # (masivo)") without touching the sandbox — pure domain data.
+            "has_csv_attachment": message.attachment.is_csv_like if message.attachment else False,
         }
 
     @staticmethod

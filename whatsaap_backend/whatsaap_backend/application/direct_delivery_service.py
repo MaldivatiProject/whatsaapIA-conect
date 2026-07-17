@@ -37,6 +37,11 @@ from .bulk_csv import (
 )
 from .contracts import ScriptRunResult, ScriptSandboxUnavailableError, SecretResolutionError
 from .ports import MessageSenderPort, ScriptSandboxPort, UnitOfWorkFactory
+from .query_traslado import (
+    DEFAULT_QUERY_BUSINESS_CATEGORY,
+    SOLICITADO_AT_METADATA_KEY,
+    build_traslado_query_reply,
+)
 from .services import (
     DEFAULT_RUN_SCRIPT_ACK_TEXT,
     build_script_input,
@@ -184,7 +189,10 @@ class ProcessIncomingMessageDirectService:
                         tenant_id=message.tenant_id,
                         source_origin=BusinessMessageOrigin.WHATSAPP,
                         business_category=rule.category if rule else "general",
-                        metadata=result.business_data,
+                        metadata={
+                            **result.business_data,
+                            SOLICITADO_AT_METADATA_KEY: message.occurred_at.isoformat(),
+                        },
                         session_id=message.session_id,
                         conversation_id=message.conversation_id,
                         message_id=row_message.message_id,
@@ -350,7 +358,12 @@ class ProcessIncomingMessageDirectService:
                                         tenant_id=message.tenant_id,
                                         source_origin=BusinessMessageOrigin.WHATSAPP,
                                         business_category=rule.category if rule else "general",
-                                        metadata=result.business_data,
+                                        metadata={
+                                            **result.business_data,
+                                            SOLICITADO_AT_METADATA_KEY: (
+                                                message.occurred_at.isoformat()
+                                            ),
+                                        },
                                         session_id=message.session_id,
                                         conversation_id=message.conversation_id,
                                         message_id=message.message_id,
@@ -385,6 +398,38 @@ class ProcessIncomingMessageDirectService:
                             logger.warning(
                                 "script_run_failed", rule_id=str(match.rule_id), error=result.error
                             )
+                    elif action.type is ActionType.QUERY_TRASLADO_STATUS:
+                        correo = extract_email(message.text)
+                        if not correo:
+                            text = (
+                                "No pude identificar el correo en tu mensaje. Escribí, por "
+                                "ejemplo:\nCONSULTAR TRASLADO TIENDA\nCORREO tu@correo.com"
+                            )
+                        else:
+                            business_category = str(
+                                action.params.get("business_category")
+                                or DEFAULT_QUERY_BUSINESS_CATEGORY
+                            )
+                            records = await uow.business_messages.find_recent_by_correo(
+                                message.tenant_id, business_category, correo
+                            )
+                            text = build_traslado_query_reply(records, correo)
+                        try:
+                            await self._sender.send_text(
+                                session_id=message.session_id,
+                                to=message.resolved_reply_to_jid,
+                                text=text,
+                                quoted_message_id=message.message_id,
+                            )
+                            actions_sent += 1
+                        except ConnectorDeliveryError as error:
+                            logger.error(
+                                "direct_delivery_send_failed",
+                                execution_id=str(execution_id),
+                                rule_id=str(match.rule_id),
+                                status_code=error.status_code,
+                            )
+                            delivery_errors.append(f"rule={match.rule_id}: {error.detail}")
 
             if next_state != state:
                 await uow.conversations.save(

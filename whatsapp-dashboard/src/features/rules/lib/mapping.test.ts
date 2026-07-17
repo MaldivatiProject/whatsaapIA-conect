@@ -16,6 +16,7 @@ describe("buildCreateRuleInput", () => {
     scriptSource: "",
     scriptFileName: "",
     ackText: "",
+    queryBusinessCategory: "",
   };
 
   it("builds a sender-equals condition", () => {
@@ -60,6 +61,22 @@ describe("buildCreateRuleInput", () => {
 
     const withoutAck = buildCreateRuleInput({ ...base, actionType: "run_script", scriptSource: script });
     expect(withoutAck.actions).toEqual([{ type: "run_script", params: { script } }]);
+  });
+
+  it("builds a query_traslado_status action with no params when category is empty", () => {
+    const input = buildCreateRuleInput({ ...base, actionType: "query_traslado_status" });
+    expect(input.actions).toEqual([{ type: "query_traslado_status", params: {} }]);
+  });
+
+  it("includes business_category in query_traslado_status params only when set", () => {
+    const input = buildCreateRuleInput({
+      ...base,
+      actionType: "query_traslado_status",
+      queryBusinessCategory: "otro_flujo",
+    });
+    expect(input.actions).toEqual([
+      { type: "query_traslado_status", params: { business_category: "otro_flujo" } },
+    ]);
   });
 });
 
@@ -151,6 +168,22 @@ describe("ruleToFormValues", () => {
       { type: "run_script", params: { script, ack_text: "off" } },
     ]);
   });
+
+  it("round-trips a query_traslado_status action's business_category", () => {
+    const rule = makeRule({
+      actions: [
+        { type: "query_traslado_status", params: { business_category: "otro_flujo" } },
+      ],
+    });
+    const values = ruleToFormValues(rule);
+    expect(values.actionType).toBe("query_traslado_status");
+    expect(values.queryBusinessCategory).toBe("otro_flujo");
+
+    const roundTripped = buildCreateRuleInput(values);
+    expect(roundTripped.actions).toEqual([
+      { type: "query_traslado_status", params: { business_category: "otro_flujo" } },
+    ]);
+  });
 });
 
 describe("summarizeRuleActions", () => {
@@ -169,5 +202,10 @@ describe("summarizeRuleActions", () => {
     const summary = summarizeRuleActions(rule);
     expect(summary).toBe("Ejecuta un script Python");
     expect(summary).not.toContain("def handle");
+  });
+
+  it("summarizes a query_traslado_status action", () => {
+    const rule = makeRule({ actions: [{ type: "query_traslado_status", params: {} }] });
+    expect(summarizeRuleActions(rule)).toBe("Consulta el estado de un traslado");
   });
 });

@@ -10,12 +10,15 @@ from whatsaap_backend.domain.models import (
     Condition,
     ConditionOperator,
     IncomingMessage,
+    MessageAttachment,
     RuleAction,
 )
 from whatsaap_backend.domain.rule_engine import InvalidRuleError, RuleEvaluator, render_template
 
 
-def _message(text: str = "hola, necesito ayuda") -> IncomingMessage:
+def _message(
+    text: str = "hola, necesito ayuda", attachment: MessageAttachment | None = None
+) -> IncomingMessage:
     return IncomingMessage(
         message_id="m-1",
         tenant_id="acme",
@@ -26,7 +29,12 @@ def _message(text: str = "hola, necesito ayuda") -> IncomingMessage:
         message_type="text",
         occurred_at=datetime.now(UTC),
         push_name="Ada",
+        attachment=attachment,
     )
+
+
+def _csv_attachment(file_name: str = "traslados.csv") -> MessageAttachment:
+    return MessageAttachment(mime_type="text/csv", base64_content="eA==", file_name=file_name)
 
 
 def test_evaluator_matches_by_priority_and_stops_on_match() -> None:
@@ -74,3 +82,74 @@ def test_template_renders_run_script_only_fields() -> None:
     )
 
     assert rendered == "traslado_tienda / user@example.com"
+
+
+def _bulk_rule(priority: int = 40) -> BusinessRule:
+    return BusinessRule(
+        tenant_id="acme",
+        name="Traslado de tienda (masivo)",
+        priority=priority,
+        stop_on_match=True,
+        conditions=(
+            Condition("text", ConditionOperator.CONTAINS, "TRASLADO TIENDA"),
+            Condition("has_csv_attachment", ConditionOperator.EQUALS, True),
+        ),
+        actions=(RuleAction(ActionType.RUN_SCRIPT, {"script": "..."}),),
+    )
+
+
+def _single_rule(priority: int = 100) -> BusinessRule:
+    return BusinessRule(
+        tenant_id="acme",
+        name="Traslado de tienda",
+        priority=priority,
+        conditions=(Condition("text", ConditionOperator.CONTAINS, "TRASLADO TIENDA"),),
+        actions=(RuleAction(ActionType.RUN_SCRIPT, {"script": "..."}),),
+    )
+
+
+def test_has_csv_attachment_condition_matches_only_with_a_csv_attachment() -> None:
+    bulk = _bulk_rule()
+
+    with_csv = RuleEvaluator().evaluate(
+        [bulk], _message("TRASLADO TIENDA", attachment=_csv_attachment())
+    )
+    without_csv = RuleEvaluator().evaluate([bulk], _message("TRASLADO TIENDA"))
+
+    assert with_csv.matched
+    assert not without_csv.matched
+
+
+def test_has_csv_attachment_ignores_non_csv_attachments() -> None:
+    bulk = _bulk_rule()
+    pdf_attachment = MessageAttachment(
+        mime_type="application/pdf", base64_content="eA==", file_name="contrato.pdf"
+    )
+
+    result = RuleEvaluator().evaluate(
+        [bulk], _message("TRASLADO TIENDA", attachment=pdf_attachment)
+    )
+
+    assert not result.matched
+
+
+def test_bulk_rule_with_stop_on_match_prevents_the_single_row_rule_from_also_firing() -> None:
+    bulk = _bulk_rule(priority=40)
+    single = _single_rule(priority=100)
+
+    result = RuleEvaluator().evaluate(
+        [single, bulk], _message("TRASLADO TIENDA", attachment=_csv_attachment())
+    )
+
+    assert len(result.matches) == 1
+    assert result.matches[0].rule_id == bulk.uuid
+
+
+def test_single_row_rule_still_fires_when_no_csv_is_attached() -> None:
+    bulk = _bulk_rule(priority=40)
+    single = _single_rule(priority=100)
+
+    result = RuleEvaluator().evaluate([single, bulk], _message("TRASLADO TIENDA"))
+
+    assert len(result.matches) == 1
+    assert result.matches[0].rule_id == single.uuid

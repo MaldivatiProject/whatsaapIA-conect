@@ -41,6 +41,11 @@ from .contracts import (
     SecretResolutionError,
 )
 from .ports import ScriptSandboxPort, UnitOfWorkFactory
+from .query_traslado import (
+    DEFAULT_QUERY_BUSINESS_CATEGORY,
+    SOLICITADO_AT_METADATA_KEY,
+    build_traslado_query_reply,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -302,7 +307,10 @@ class ProcessIncomingMessageService:
                     tenant_id=message.tenant_id,
                     source_origin=BusinessMessageOrigin.WHATSAPP,
                     business_category=rule.category if rule else "general",
-                    metadata=result.business_data,
+                    metadata={
+                        **result.business_data,
+                        SOLICITADO_AT_METADATA_KEY: message.occurred_at.isoformat(),
+                    },
                     session_id=message.session_id,
                     conversation_id=message.conversation_id,
                     message_id=message.message_id,
@@ -411,7 +419,10 @@ class ProcessIncomingMessageService:
                         tenant_id=message.tenant_id,
                         source_origin=BusinessMessageOrigin.WHATSAPP,
                         business_category=rule.category if rule else "general",
-                        metadata=result.business_data,
+                        metadata={
+                            **result.business_data,
+                            SOLICITADO_AT_METADATA_KEY: message.occurred_at.isoformat(),
+                        },
                         session_id=message.session_id,
                         conversation_id=message.conversation_id,
                         message_id=row_message.message_id,
@@ -561,6 +572,31 @@ class ProcessIncomingMessageService:
                             command_count += 1
                         script_actions.append((match, action, rule))
                         action_count += 1
+                    elif action.type is ActionType.QUERY_TRASLADO_STATUS:
+                        correo = extract_email(message.text)
+                        if not correo:
+                            text = (
+                                "No pude identificar el correo en tu mensaje. Escribí, por "
+                                "ejemplo:\nCONSULTAR TRASLADO TIENDA\nCORREO tu@correo.com"
+                            )
+                        else:
+                            business_category = str(
+                                action.params.get("business_category")
+                                or DEFAULT_QUERY_BUSINESS_CATEGORY
+                            )
+                            records = await uow.business_messages.find_recent_by_correo(
+                                message.tenant_id, business_category, correo
+                            )
+                            text = build_traslado_query_reply(records, correo)
+                        await self._enqueue_send(
+                            uow,
+                            execution_id=execution_id,
+                            correlation_id=correlation_id,
+                            message=message,
+                            text=text,
+                        )
+                        action_count += 1
+                        command_count += 1
 
             if next_state != state:
                 await uow.conversations.save(

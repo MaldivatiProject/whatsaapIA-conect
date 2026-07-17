@@ -37,7 +37,7 @@ const ROUTE_LABELS: Record<string, string> = {
   "/rules": "Reglas",
   "/identities": "Identidades",
   "/reports": "Reportes",
-  "/business-messages": "Resultados",
+  "/business-messages": "Log",
   "/activity": "Actividad",
   "/integrations": "Integraciones",
 };
@@ -48,7 +48,7 @@ const NAV_ITEMS = [
   { href: "/messages", label: "Mensajes", icon: MessagesSquare },
   { href: "/rules", label: "Reglas", icon: ListChecks },
   { href: "/reports", label: "Reportes", icon: BarChart3 },
-  { href: "/business-messages", label: "Resultados", icon: ClipboardCheck },
+  { href: "/business-messages", label: "Log", icon: ClipboardCheck },
   { href: "/activity", label: "Actividad", icon: Radio },
   { href: "/integrations", label: "Integraciones", icon: Plug },
 ] as const;
@@ -166,7 +166,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
   }
 
   return (
-    <div className="flex min-h-full flex-1">
+    <div className="flex h-full flex-1 overflow-hidden">
       <aside className="hidden w-60 shrink-0 border-r bg-muted/30 p-4 sm:flex sm:flex-col sm:gap-6">
         <BrandMark />
         <NavLinks pathname={pathname} />
@@ -206,8 +206,8 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
         </SheetContent>
       </Sheet>
 
-      <div className="flex flex-1 flex-col">
-        <header className="flex items-center justify-between gap-4 border-b px-4 py-3 sm:px-6">
+      <div className="flex min-h-0 flex-1 flex-col">
+        <header className="flex shrink-0 items-center justify-between gap-4 border-b px-4 py-3 sm:px-6">
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex items-center gap-2 sm:hidden">
               <Button
@@ -233,7 +233,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             </Badge>
           </div>
         </header>
-        <main className="flex-1 p-4 sm:p-6">{children}</main>
+        <main className="min-h-0 flex-1 overflow-y-auto p-4 sm:p-6">{children}</main>
       </div>
     </div>
   );

@@ -1,4 +1,5 @@
 import { io, type Socket } from "socket.io-client";
+import { connectorWsOrigin } from "@/shared/lib/api/connectorOrigin";
 import type { ConnectorEvent, ConnectorEventName } from "@/shared/types/connector.types";
 
 type Listener = (event: ConnectorEvent) => void;
@@ -17,7 +18,7 @@ class ConnectorSocket {
     if (this.socket && this.currentApiKey === apiKey) return;
     this.disconnect();
 
-    const url = process.env.NEXT_PUBLIC_CONNECTOR_WS_URL ?? "http://localhost:3000";
+    const url = connectorWsOrigin();
     this.socket = io(url, {
       transports: ["websocket"],
       auth: { token: apiKey },

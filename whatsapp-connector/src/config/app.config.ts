@@ -231,7 +231,62 @@ export function isSwaggerEnabled(config: AppConfig): boolean {
   return config.SWAGGER_ENABLED ?? config.NODE_ENV !== 'production';
 }
 
-export function getCorsOrigins(config: AppConfig): string | string[] {
+export type CorsOriginValidator = (
+  requestOrigin: string | undefined,
+  callback: (err: Error | null, allow?: boolean) => void,
+) => void;
+
+// RFC 1918 private ranges + localhost. Deliberately excludes link-local
+// (169.254.0.0/16) and anything outside these ranges — this is not a
+// general LAN-detector, only wide enough to cover a typical home/office
+// router-assigned address.
+const PRIVATE_LAN_HOSTNAME =
+  /^(?:localhost|127\.0\.0\.1|10(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2})$/;
+
+function allowedPortsOf(origins: string[]): Set<string> {
+  const ports = new Set<string>();
+  for (const origin of origins) {
+    try {
+      ports.add(new URL(origin).port);
+    } catch {
+      // Not a parseable absolute URL — ignored for port extraction; it can
+      // still match via the exact-string check in getCorsOrigins.
+    }
+  }
+  return ports;
+}
+
+function isAllowedPrivateLanOrigin(origin: string, allowedPorts: Set<string>): boolean {
+  try {
+    const url = new URL(origin);
+    return allowedPorts.has(url.port) && PRIVATE_LAN_HOSTNAME.test(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Configured CORS_ORIGINS entries always match exactly. Additionally, any
+ * origin on a private-network address (RFC 1918, or localhost/127.0.0.1)
+ * reusing one of the SAME ports already configured for localhost is allowed
+ * too. This keeps the dashboard reachable when the host machine's LAN IP
+ * changes (e.g. a laptop moving networks / DHCP reassignment) without
+ * requiring a config change or restart, while still rejecting origins
+ * outside the private network or on an unexpected port. `CORS_ORIGINS=*`
+ * is handled separately and forbidden in production (see AppConfigSchema).
+ */
+export function getCorsOrigins(config: AppConfig): string | string[] | CorsOriginValidator {
   const origins = config.CORS_ORIGINS.split(',').map((o) => o.trim());
-  return origins.length === 1 && origins[0] === '*' ? '*' : origins;
+  if (origins.length === 1 && origins[0] === '*') return '*';
+
+  const allowedPorts = allowedPortsOf(origins);
+
+  return (requestOrigin, callback) => {
+    if (!requestOrigin || origins.includes(requestOrigin)) {
+      callback(null, true);
+      return;
+    }
+    const allowed = isAllowedPrivateLanOrigin(requestOrigin, allowedPorts);
+    callback(allowed ? null : new Error(`Origin not allowed by CORS: ${requestOrigin}`), allowed);
+  };
 }

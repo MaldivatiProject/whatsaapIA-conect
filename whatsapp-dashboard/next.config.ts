@@ -10,12 +10,30 @@ const isDev = process.env.NODE_ENV === "development";
 // accessing the app from another device on the network). Only emit it once
 // TLS is actually configured in front of this app.
 const httpsEnabled = process.env.NEXT_PUBLIC_HTTPS_ENABLED === "true";
-const connectorApiUrl = process.env.NEXT_PUBLIC_CONNECTOR_API_URL ?? "http://localhost:3000";
-const connectorWsUrl = process.env.NEXT_PUBLIC_CONNECTOR_WS_URL ?? connectorApiUrl;
-const connectorWsAsWs = connectorWsUrl.replace(/^http/, "ws");
 const rulesApiUrl = process.env.NEXT_PUBLIC_RULES_API_URL ?? "/rules-api";
 const rulesInternalApiUrl = process.env.RULES_INTERNAL_API_URL ?? "http://whatsaap-backend-api:8000";
 const rulesConnectSrc = rulesApiUrl.startsWith("/") ? "" : ` ${rulesApiUrl}`;
+
+// The connector's host isn't known at build time — shared/lib/api/connectorOrigin.ts
+// derives it in the browser from whatever host loaded the dashboard itself (so a
+// laptop's changing LAN IP/DHCP address doesn't require a rebuild). CSP can't express
+// "the same host this page was loaded from", so instead this allows the connector's
+// port on any host; NEXT_PUBLIC_CONNECTOR_API_URL/_WS_URL, when explicitly set for a
+// topology where connector and dashboard aren't co-located, are additionally allow-listed.
+const connectorApiUrlOverride = process.env.NEXT_PUBLIC_CONNECTOR_API_URL;
+const connectorWsUrlOverride = process.env.NEXT_PUBLIC_CONNECTOR_WS_URL;
+const connectorPort = process.env.NEXT_PUBLIC_CONNECTOR_PORT || "3000";
+const connectorConnectSrc = [
+  `http://*:${connectorPort}`,
+  `https://*:${connectorPort}`,
+  `ws://*:${connectorPort}`,
+  `wss://*:${connectorPort}`,
+  connectorApiUrlOverride,
+  connectorWsUrlOverride,
+  connectorWsUrlOverride?.replace(/^http/, "ws"),
+]
+  .filter(Boolean)
+  .join(" ");
 
 const cspHeader = `
   default-src 'self';
@@ -23,7 +41,7 @@ const cspHeader = `
   style-src 'self' 'unsafe-inline';
   img-src 'self' blob: data:;
   font-src 'self';
-  connect-src 'self' ${connectorApiUrl} ${connectorWsUrl} ${connectorWsAsWs}${rulesConnectSrc};
+  connect-src 'self' ${connectorConnectSrc}${rulesConnectSrc};
   object-src 'none';
   base-uri 'self';
   form-action 'self';

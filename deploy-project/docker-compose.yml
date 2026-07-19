@@ -292,8 +292,14 @@ services:
       dockerfile: Dockerfile
       target: production
       args:
-        NEXT_PUBLIC_CONNECTOR_API_URL: ${PUBLIC_CONNECTOR_API_URL:-http://localhost:3000}
-        NEXT_PUBLIC_CONNECTOR_WS_URL: ${PUBLIC_CONNECTOR_WS_URL:-http://localhost:3000}
+        # Left empty by default: the dashboard auto-detects the connector's
+        # origin from whatever host the browser used (see
+        # shared/lib/api/connectorOrigin.ts) instead of baking one in — set
+        # PUBLIC_CONNECTOR_API_URL/_WS_URL only if connector and dashboard
+        # don't share a host.
+        NEXT_PUBLIC_CONNECTOR_API_URL: ${PUBLIC_CONNECTOR_API_URL:-}
+        NEXT_PUBLIC_CONNECTOR_WS_URL: ${PUBLIC_CONNECTOR_WS_URL:-}
+        NEXT_PUBLIC_CONNECTOR_PORT: ${CONNECTOR_HOST_PORT:-3000}
         NEXT_PUBLIC_RULES_API_URL: ${PUBLIC_RULES_API_URL:-/rules-api}
         RULES_INTERNAL_API_URL: http://whatsaap-backend-api:8000
         NEXT_PUBLIC_HTTPS_ENABLED: ${PUBLIC_HTTPS_ENABLED:-false}

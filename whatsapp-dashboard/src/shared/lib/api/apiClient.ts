@@ -1,5 +1,6 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from "axios";
 import { useAuthStore } from "@/features/auth/store/authStore";
+import { connectorApiOrigin } from "@/shared/lib/api/connectorOrigin";
 import type { ProblemDetails } from "@/shared/types/connector.types";
 
 export class ApiError extends Error {
@@ -15,7 +16,7 @@ export class ApiError extends Error {
 }
 
 export const apiClient = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_CONNECTOR_API_URL ?? "http://localhost:3000",
+  baseURL: connectorApiOrigin(),
   timeout: 15000,
   headers: {
     "Content-Type": "application/json",

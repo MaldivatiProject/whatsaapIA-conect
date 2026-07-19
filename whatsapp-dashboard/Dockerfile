@@ -3,8 +3,13 @@ FROM node:22-alpine AS builder
 WORKDIR /app
 
 # NEXT_PUBLIC_* variables are inlined into the client bundle at build time.
-ARG NEXT_PUBLIC_CONNECTOR_API_URL=http://localhost:3000
-ARG NEXT_PUBLIC_CONNECTOR_WS_URL=http://localhost:3000
+# Leave the two below empty (default) to auto-detect the connector's origin
+# from the browser's own host at runtime — see shared/lib/api/connectorOrigin.ts.
+# Only set them for topologies where connector and dashboard don't share a host.
+ARG NEXT_PUBLIC_CONNECTOR_API_URL=
+ARG NEXT_PUBLIC_CONNECTOR_WS_URL=
+# Port whatsapp-connector listens on, used by the auto-detect above.
+ARG NEXT_PUBLIC_CONNECTOR_PORT=3000
 ARG NEXT_PUBLIC_RULES_API_URL=/rules-api
 ARG RULES_INTERNAL_API_URL=http://whatsaap-backend-api:8000
 # Only set to "true" when this app is actually served over HTTPS (e.g. behind
@@ -15,6 +20,7 @@ ARG RULES_INTERNAL_API_URL=http://whatsaap-backend-api:8000
 ARG NEXT_PUBLIC_HTTPS_ENABLED=false
 ENV NEXT_PUBLIC_CONNECTOR_API_URL=${NEXT_PUBLIC_CONNECTOR_API_URL}
 ENV NEXT_PUBLIC_CONNECTOR_WS_URL=${NEXT_PUBLIC_CONNECTOR_WS_URL}
+ENV NEXT_PUBLIC_CONNECTOR_PORT=${NEXT_PUBLIC_CONNECTOR_PORT}
 ENV NEXT_PUBLIC_RULES_API_URL=${NEXT_PUBLIC_RULES_API_URL}
 ENV RULES_INTERNAL_API_URL=${RULES_INTERNAL_API_URL}
 ENV NEXT_PUBLIC_HTTPS_ENABLED=${NEXT_PUBLIC_HTTPS_ENABLED}

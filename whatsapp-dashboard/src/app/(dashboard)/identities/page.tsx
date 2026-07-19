@@ -13,6 +13,8 @@ import type {
 } from "@/features/contact-identities/types/contactIdentity.types";
 import { Skeleton } from "@/shared/components/ui/skeleton";
 import { ErrorState } from "@/shared/components/layout/ErrorState";
+import { ConfirmDialog } from "@/shared/components/layout/ConfirmDialog";
+import { useConfirmDialog } from "@/shared/hooks/useConfirmDialog";
 
 function toFormValues(identity: ContactIdentity): ContactIdentityFormValues {
   return {
@@ -37,6 +39,7 @@ export default function IdentitiesPage() {
     deleteIdentity,
   } = useContactIdentities();
   const [editingIdentity, setEditingIdentity] = useState<ContactIdentity | null>(null);
+  const { confirm, confirmDialogProps } = useConfirmDialog();
 
   return (
     <div className="space-y-6">
@@ -65,10 +68,14 @@ export default function IdentitiesPage() {
           identities={identities}
           onToggleEnabled={toggleEnabled}
           onEdit={setEditingIdentity}
-          onDelete={(id) => {
-            if (confirm("¿Eliminar esta identidad? Esta acción no se puede deshacer.")) {
-              deleteIdentity(id);
-            }
+          onDelete={async (id) => {
+            const confirmed = await confirm({
+              title: "Eliminar esta identidad",
+              description: "Esta acción no se puede deshacer.",
+              confirmLabel: "Eliminar",
+              variant: "destructive",
+            });
+            if (confirmed) deleteIdentity(id);
           }}
         />
       )}
@@ -82,6 +89,7 @@ export default function IdentitiesPage() {
           onSave={(input) => updateIdentity(editingIdentity.id, input)}
         />
       )}
+      <ConfirmDialog {...confirmDialogProps} />
     </div>
   );
 }

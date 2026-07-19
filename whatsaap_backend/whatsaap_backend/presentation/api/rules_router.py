@@ -122,6 +122,15 @@ async def simulate_rules(
     )
 
 
+@router.get("/deleted", response_model=list[RuleOut])
+async def list_deleted_rules(
+    request: Request, tenant_id: str = Depends(require_tenant)
+) -> list[RuleOut]:
+    async with request.app.state.uow_factory() as uow:
+        rules = await uow.rules.list_deleted(tenant_id)
+        return [RuleOut.from_domain(rule) for rule in rules]
+
+
 @router.get("/{rule_id}", response_model=RuleOut)
 async def get_rule(
     rule_id: UUID, request: Request, tenant_id: str = Depends(require_tenant)
@@ -190,3 +199,15 @@ async def delete_rule(
         if not deleted:
             raise RuleNotFoundError(str(rule_id))
         await uow.commit()
+
+
+@router.post("/{rule_id}/restore", response_model=RuleOut)
+async def restore_rule(
+    rule_id: UUID, request: Request, tenant_id: str = Depends(require_tenant)
+) -> RuleOut:
+    async with request.app.state.uow_factory() as uow:
+        restored = await uow.rules.restore(tenant_id, rule_id)
+        if restored is None:
+            raise RuleNotFoundError(str(rule_id))
+        await uow.commit()
+        return RuleOut.from_domain(restored)

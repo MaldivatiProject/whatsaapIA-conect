@@ -16,6 +16,7 @@ describe("buildCreateRuleInput", () => {
     scriptSource: "",
     scriptFileName: "",
     ackText: "",
+    secretsInput: "",
     queryBusinessCategory: "",
   };
 
@@ -63,6 +64,22 @@ describe("buildCreateRuleInput", () => {
     expect(withoutAck.actions).toEqual([{ type: "run_script", params: { script } }]);
   });
 
+  it("includes secrets in run_script params only when set, parsed from a comma list", () => {
+    const script = "def handle(message):\n    return {}";
+    const withSecrets = buildCreateRuleInput({
+      ...base,
+      actionType: "run_script",
+      scriptSource: script,
+      secretsInput: "MYSQL_PASSWORD, OTHER_KEY",
+    });
+    expect(withSecrets.actions).toEqual([
+      { type: "run_script", params: { script, secrets: ["MYSQL_PASSWORD", "OTHER_KEY"] } },
+    ]);
+
+    const withoutSecrets = buildCreateRuleInput({ ...base, actionType: "run_script", scriptSource: script });
+    expect(withoutSecrets.actions).toEqual([{ type: "run_script", params: { script } }]);
+  });
+
   it("builds a query_traslado_status action with no params when category is empty", () => {
     const input = buildCreateRuleInput({ ...base, actionType: "query_traslado_status" });
     expect(input.actions).toEqual([{ type: "query_traslado_status", params: {} }]);
@@ -95,6 +112,7 @@ function makeRule(overrides: Partial<Rule> = {}): Rule {
     conditions: [{ field: "sender", operator: "equals", value: "573243744739@s.whatsapp.net" }],
     actions: [{ type: "send_text", params: { text: "Procesando tu solicitud..." } }],
     created_at: "2026-07-09T00:00:00Z",
+    deleted_at: null,
     ...overrides,
   };
 }
@@ -166,6 +184,20 @@ describe("ruleToFormValues", () => {
     const roundTripped = buildCreateRuleInput(values);
     expect(roundTripped.actions).toEqual([
       { type: "run_script", params: { script, ack_text: "off" } },
+    ]);
+  });
+
+  it("round-trips a run_script action's secrets", () => {
+    const script = "def handle(message):\n    return {}";
+    const rule = makeRule({
+      actions: [{ type: "run_script", params: { script, secrets: ["MYSQL_PASSWORD"] } }],
+    });
+    const values = ruleToFormValues(rule);
+    expect(values.secretsInput).toBe("MYSQL_PASSWORD");
+
+    const roundTripped = buildCreateRuleInput(values);
+    expect(roundTripped.actions).toEqual([
+      { type: "run_script", params: { script, secrets: ["MYSQL_PASSWORD"] } },
     ]);
   });
 

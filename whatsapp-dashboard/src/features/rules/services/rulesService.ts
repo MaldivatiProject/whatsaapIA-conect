@@ -20,4 +20,14 @@ export const rulesService = {
   async remove(id: string): Promise<void> {
     await rulesApiClient.delete(`/api/v1/rules/${id}`);
   },
+
+  async listDeleted(): Promise<Rule[]> {
+    const { data } = await rulesApiClient.get<Rule[]>("/api/v1/rules/deleted");
+    return data;
+  },
+
+  async restore(id: string): Promise<Rule> {
+    const { data } = await rulesApiClient.post<Rule>(`/api/v1/rules/${id}/restore`);
+    return data;
+  },
 };

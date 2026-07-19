@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
@@ -22,11 +23,22 @@ class _FakeRuleRepository:
         return [r for r in self._rules.values() if r.tenant_id == tenant_id and r.enabled]
 
     async def list_all(self, tenant_id: str) -> list[BusinessRule]:
-        return [r for r in self._rules.values() if r.tenant_id == tenant_id]
+        return [
+            r for r in self._rules.values() if r.tenant_id == tenant_id and r.expiration_date is None
+        ]
+
+    async def list_deleted(self, tenant_id: str) -> list[BusinessRule]:
+        return [
+            r
+            for r in self._rules.values()
+            if r.tenant_id == tenant_id and r.expiration_date is not None
+        ]
 
     async def get(self, tenant_id: str, rule_id: UUID) -> BusinessRule | None:
         rule = self._rules.get(rule_id)
-        return rule if rule and rule.tenant_id == tenant_id else None
+        if rule and rule.tenant_id == tenant_id and rule.expiration_date is None:
+            return rule
+        return None
 
     async def add(self, rule: BusinessRule) -> BusinessRule:
         self._rules[rule.uuid] = rule
@@ -41,10 +53,18 @@ class _FakeRuleRepository:
 
     async def soft_delete(self, tenant_id: str, rule_id: UUID) -> bool:
         rule = self._rules.get(rule_id)
-        if not rule or rule.tenant_id != tenant_id:
+        if not rule or rule.tenant_id != tenant_id or rule.expiration_date is not None:
             return False
-        del self._rules[rule_id]
+        rule.expiration_date = datetime.now(UTC)
+        rule.enabled = False
         return True
+
+    async def restore(self, tenant_id: str, rule_id: UUID) -> BusinessRule | None:
+        rule = self._rules.get(rule_id)
+        if not rule or rule.tenant_id != tenant_id or rule.expiration_date is None:
+            return None
+        rule.expiration_date = None
+        return rule
 
 
 class _FakeUow:
@@ -163,6 +183,82 @@ def test_get_nonexistent_rule_returns_404() -> None:
     client = _client()
     response = client.get(f"/api/v1/rules/{uuid4()}", headers=_headers())
     assert response.status_code == 404
+
+
+def test_deleted_rule_appears_in_deleted_list_with_deleted_at_and_disappears_from_active_list() -> None:
+    client = _client()
+
+    created = client.post("/api/v1/rules", json=_RULE_PAYLOAD, headers=_headers())
+    rule_id = created.json()["id"]
+    assert created.json()["deleted_at"] is None
+
+    deleted = client.delete(f"/api/v1/rules/{rule_id}", headers=_headers())
+    assert deleted.status_code == 204
+
+    active = client.get("/api/v1/rules", headers=_headers())
+    assert active.json() == []
+
+    trashed = client.get("/api/v1/rules/deleted", headers=_headers())
+    assert trashed.status_code == 200
+    assert len(trashed.json()) == 1
+    assert trashed.json()[0]["id"] == rule_id
+    assert trashed.json()[0]["deleted_at"] is not None
+
+
+def test_restore_undeletes_a_rule_but_keeps_it_disabled() -> None:
+    client = _client()
+
+    created = client.post("/api/v1/rules", json=_RULE_PAYLOAD, headers=_headers())
+    rule_id = created.json()["id"]
+    client.delete(f"/api/v1/rules/{rule_id}", headers=_headers())
+
+    restored = client.post(f"/api/v1/rules/{rule_id}/restore", headers=_headers())
+    assert restored.status_code == 200
+    assert restored.json()["deleted_at"] is None
+    # Restoring only undoes the deletion — it doesn't silently re-arm the rule.
+    assert restored.json()["enabled"] is False
+
+    active = client.get("/api/v1/rules", headers=_headers())
+    assert len(active.json()) == 1
+    assert active.json()[0]["id"] == rule_id
+
+    trashed = client.get("/api/v1/rules/deleted", headers=_headers())
+    assert trashed.json() == []
+
+
+def test_restore_nonexistent_rule_returns_404() -> None:
+    client = _client()
+    response = client.post(f"/api/v1/rules/{uuid4()}/restore", headers=_headers())
+    assert response.status_code == 404
+
+
+def test_restore_a_rule_that_is_not_deleted_returns_404() -> None:
+    client = _client()
+    created = client.post("/api/v1/rules", json=_RULE_PAYLOAD, headers=_headers())
+    rule_id = created.json()["id"]
+
+    response = client.post(f"/api/v1/rules/{rule_id}/restore", headers=_headers())
+    assert response.status_code == 404
+
+
+def test_another_tenant_cannot_see_or_restore_a_deleted_rule() -> None:
+    settings = Settings(
+        API_KEYS=f"acme:{API_KEY},other:other-secret-16-chars-ok", AUTH_ENABLED=True
+    )
+    app = create_app(settings)
+    repo = _FakeRuleRepository()
+    app.state.uow_factory = lambda: _FakeUow(repo)
+    client = TestClient(app)
+
+    created = client.post("/api/v1/rules", json=_RULE_PAYLOAD, headers=_headers())
+    rule_id = created.json()["id"]
+    client.delete(f"/api/v1/rules/{rule_id}", headers=_headers())
+
+    other_headers = {"x-api-key": "other-secret-16-chars-ok"}
+    assert client.get("/api/v1/rules/deleted", headers=other_headers).json() == []
+    assert (
+        client.post(f"/api/v1/rules/{rule_id}/restore", headers=other_headers).status_code == 404
+    )
 
 
 def test_another_tenant_cannot_see_or_modify_the_rule() -> None:

@@ -7,10 +7,17 @@ ARG NEXT_PUBLIC_CONNECTOR_API_URL=http://localhost:3000
 ARG NEXT_PUBLIC_CONNECTOR_WS_URL=http://localhost:3000
 ARG NEXT_PUBLIC_RULES_API_URL=/rules-api
 ARG RULES_INTERNAL_API_URL=http://whatsaap-backend-api:8000
+# Only set to "true" when this app is actually served over HTTPS (e.g. behind
+# a TLS-terminating reverse proxy). It controls whether the CSP sends
+# upgrade-insecure-requests — on a plain-HTTP deployment that directive makes
+# browsers silently try to fetch every asset over HTTPS, which fails and
+# leaves the page blank/unstyled (see next.config.ts).
+ARG NEXT_PUBLIC_HTTPS_ENABLED=false
 ENV NEXT_PUBLIC_CONNECTOR_API_URL=${NEXT_PUBLIC_CONNECTOR_API_URL}
 ENV NEXT_PUBLIC_CONNECTOR_WS_URL=${NEXT_PUBLIC_CONNECTOR_WS_URL}
 ENV NEXT_PUBLIC_RULES_API_URL=${NEXT_PUBLIC_RULES_API_URL}
 ENV RULES_INTERNAL_API_URL=${RULES_INTERNAL_API_URL}
+ENV NEXT_PUBLIC_HTTPS_ENABLED=${NEXT_PUBLIC_HTTPS_ENABLED}
 
 COPY package*.json ./
 RUN npm ci

@@ -4,8 +4,11 @@ import { GoogleDriveSettingsForm } from "@/features/integrations/components/Goog
 import { useDriveIntegration } from "@/features/integrations/hooks/useDriveIntegration";
 import { Skeleton } from "@/shared/components/ui/skeleton";
 import { ErrorState } from "@/shared/components/layout/ErrorState";
+import { ConfirmDialog } from "@/shared/components/layout/ConfirmDialog";
+import { useConfirmDialog } from "@/shared/hooks/useConfirmDialog";
 
 export default function IntegrationsPage() {
+  const { confirm, confirmDialogProps } = useConfirmDialog();
   const {
     config,
     isLoading,
@@ -49,14 +52,18 @@ export default function IntegrationsPage() {
           testResult={testResult}
           onSaveConfig={saveConfig}
           onSaveCredentials={saveCredentials}
-          onDelete={() => {
-            if (confirm("¿Desactivar la integración con Google Drive?")) {
-              deleteConfig();
-            }
+          onDelete={async () => {
+            const confirmed = await confirm({
+              title: "Desactivar la integración con Google Drive",
+              confirmLabel: "Desactivar",
+              variant: "destructive",
+            });
+            if (confirmed) deleteConfig();
           }}
           onTestConnection={() => testConnection()}
         />
       )}
+      <ConfirmDialog {...confirmDialogProps} />
     </div>
   );
 }

@@ -254,6 +254,7 @@ class RuleOut(BaseModel):
     conditions: list[ConditionSchema]
     actions: list[RuleActionSchema]
     created_at: datetime
+    deleted_at: datetime | None
 
     @classmethod
     def from_domain(cls, rule: BusinessRule) -> RuleOut:
@@ -275,6 +276,7 @@ class RuleOut(BaseModel):
             conditions=[ConditionSchema.from_domain(c) for c in rule.conditions],
             actions=[RuleActionSchema.from_domain(a) for a in rule.actions],
             created_at=rule.creation_date,
+            deleted_at=rule.expiration_date,
         )
 
 

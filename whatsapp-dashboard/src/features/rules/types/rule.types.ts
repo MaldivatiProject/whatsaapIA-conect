@@ -41,6 +41,7 @@ export interface Rule {
   conditions: RuleCondition[];
   actions: RuleAction[];
   created_at: string;
+  deleted_at: string | null;
 }
 
 export interface CreateRuleInput {
@@ -93,6 +94,8 @@ export interface SimpleRuleFormValues {
   scriptFileName: string;
   /** Mensaje inmediato enviado al matchear la regla, antes de correr el script. Vacío = default del backend; "off" = sin ack. */
   ackText: string;
+  /** run_script only — nombres de secretos (params.secrets), separados por coma. El script los lee con os.environ. Vacío = ninguno. */
+  secretsInput: string;
   /** query_traslado_status only — categoría de negocio a consultar. Vacío = "traslado_tienda" (default del backend). */
   queryBusinessCategory: string;
 }

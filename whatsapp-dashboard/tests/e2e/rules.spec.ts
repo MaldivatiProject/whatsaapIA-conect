@@ -16,6 +16,7 @@ const rule1 = {
   conditions: [{ field: "text", operator: "contains", value: "cotización" }],
   actions: [{ type: "send_text", params: { text: "Hola {{ push_name }}, ya te cotizamos." } }],
   created_at: "2026-07-01T00:00:00.000Z",
+  deleted_at: null,
 };
 
 const rule2 = {
@@ -37,6 +38,7 @@ const rule2 = {
     },
   ],
   created_at: "2026-07-01T00:00:00.000Z",
+  deleted_at: null,
 };
 
 async function mockLogin(page: Page) {
@@ -61,6 +63,11 @@ async function mockRulesApi(page: Page) {
     const request = route.request();
     const id = request.url().split("/").pop() ?? "";
 
+    // This mock hard-removes on DELETE (see below) rather than modeling the
+    // backend's soft-delete, so there's never anything to list as deleted.
+    if (request.method() === "GET" && id === "deleted") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: "[]" });
+    }
     if (request.method() === "PATCH") {
       const body = request.postDataJSON() as Record<string, unknown>;
       patchRequests.push({ id, body });
@@ -98,30 +105,29 @@ test.describe("rules — inline row detail", () => {
     // No pencil/edit icon button in the actions column anymore.
     await expect(page.getByRole("button", { name: /^editar regla/i })).toHaveCount(0);
 
-    const row1 = page.getByRole("row", { name: /Auto-respuesta soporte/ });
-    const expandRow1 = row1.getByRole("button", { name: /ver detalle de auto-respuesta soporte/i });
     const detailPanel = page.locator('tr[data-state="selected"]');
 
-    await expect(expandRow1).toHaveAttribute("aria-expanded", "false");
-    await expandRow1.click();
-    await expect(expandRow1).toHaveAttribute("aria-expanded", "true");
+    // "Ver detalle" lives in the row's "Acciones" (⋮) menu, not a standalone button.
+    async function toggleDetail(ruleName: string) {
+      await page.getByRole("button", { name: new RegExp(`acciones para ${ruleName}`, "i") }).click();
+      await page.getByRole("menuitem", { name: /ver detalle/i }).click();
+    }
+
+    await expect(detailPanel).toHaveCount(0);
+    await toggleDetail("Auto-respuesta soporte");
     await expect(detailPanel.getByText("Hola {{ push_name }}, ya te cotizamos.", { exact: true })).toBeVisible();
 
     // Expanding a different row collapses the first one (accordion behavior).
-    const row2 = page.getByRole("row", { name: /Traslado con script/ });
-    const expandRow2 = row2.getByRole("button", { name: /ver detalle de traslado con script/i });
-    await expandRow2.click();
-    await expect(expandRow1).toHaveAttribute("aria-expanded", "false");
+    await toggleDetail("Traslado con script");
     await expect(detailPanel.getByText("Script Python")).toBeVisible();
     await expect(detailPanel.locator("pre", { hasText: "def handle(message)" })).toBeVisible();
 
-    // Clicking the same chevron again collapses it.
-    await expandRow2.click();
-    await expect(expandRow2).toHaveAttribute("aria-expanded", "false");
+    // Choosing "Ver detalle" again on the same row collapses it.
+    await toggleDetail("Traslado con script");
     await expect(detailPanel).toHaveCount(0);
 
     // Edit flow: expand, edit, cancel discards without saving.
-    await expandRow1.click();
+    await toggleDetail("Auto-respuesta soporte");
     await detailPanel.getByRole("button", { name: "Editar" }).click();
     const nameInput = detailPanel.getByLabel("Nombre", { exact: true });
     await expect(nameInput).toHaveValue("Auto-respuesta soporte");
@@ -153,9 +159,10 @@ test.describe("rules — inline row detail", () => {
     await expect(page.getByText("Inactiva")).toBeVisible();
     expect(patchRequests).toContainEqual({ id: "rule-1", body: { enabled: false } });
 
-    page.once("dialog", (dialog) => dialog.accept());
     await page.getByRole("button", { name: /acciones para auto-respuesta soporte/i }).click();
     await page.getByRole("menuitem", { name: /eliminar/i }).click();
+    // Deleting goes through the themed ConfirmDialog, not a native window.confirm().
+    await page.getByRole("alertdialog").getByRole("button", { name: "Eliminar" }).click();
     await expect(page.getByText("Auto-respuesta soporte")).toHaveCount(0);
     expect(deletedIds).toContain("rule-1");
   });

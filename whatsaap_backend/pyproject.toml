@@ -15,6 +15,10 @@ dependencies = [
   "google-api-python-client>=2.140,<3",
   "google-auth>=2.34,<3",
   "httpx>=0.28,<1",
+  # Not used by our own code — installed so admin-uploaded RUN_SCRIPT actions
+  # (e.g. "Solicitud Clave Genérica") can `import mysql.connector` to query
+  # the external alocredit MySQL database, same rationale as selenium below.
+  "mysql-connector-python>=9.1,<10",
   "prometheus-client>=0.21,<1",
   "pydantic-settings>=2.7,<3",
   # Not used by our own code — installed so admin-uploaded RUN_SCRIPT actions

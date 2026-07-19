@@ -1,6 +1,7 @@
 "use client";
 
-import { Code2, FileSpreadsheet, MoreHorizontal, Power, PowerOff, Reply, Search, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { Code2, Eye, FileSpreadsheet, MoreHorizontal, Power, PowerOff, Reply, Search, Trash2 } from "lucide-react";
 import { DataTable, type DataTableColumn } from "@/shared/components/data/DataTable";
 import { Badge } from "@/shared/components/ui/badge";
 import { Button } from "@/shared/components/ui/button";
@@ -24,11 +25,18 @@ interface RulesTableProps {
 }
 
 export function RulesTable({ rules, onToggleEnabled, onSaveRule, isSavingRule, onDelete }: RulesTableProps) {
+  const [expandedRuleId, setExpandedRuleId] = useState<string | null>(null);
+
+  function toggleDetail(ruleId: string) {
+    setExpandedRuleId((current) => (current === ruleId ? null : ruleId));
+  }
+
   const columns: DataTableColumn<Rule>[] = [
     {
       id: "priority",
       header: "Orden",
       title: "Menor número = se evalúa primero",
+      hideBelow: "sm",
       cell: (rule) => (
         <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-md bg-muted px-1.5 font-mono text-xs text-muted-foreground">
           {rule.priority}
@@ -64,6 +72,7 @@ export function RulesTable({ rules, onToggleEnabled, onSaveRule, isSavingRule, o
     {
       id: "condition",
       header: "Condición",
+      hideBelow: "lg",
       cell: (rule) => {
         const Icon = conditionFieldIcon(rule.conditions[0]?.field);
         return (
@@ -81,6 +90,7 @@ export function RulesTable({ rules, onToggleEnabled, onSaveRule, isSavingRule, o
     {
       id: "action",
       header: "Acción",
+      hideBelow: "md",
       cell: (rule) => {
         const isScript = rule.actions.some((action) => action.type === "run_script");
         const isQuery = rule.actions.some((action) => action.type === "query_traslado_status");
@@ -145,6 +155,10 @@ export function RulesTable({ rules, onToggleEnabled, onSaveRule, isSavingRule, o
             }
           />
           <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => toggleDetail(rule.id)} className="gap-2">
+              <Eye className="h-4 w-4" aria-hidden="true" />
+              Ver detalle
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={() => onToggleEnabled(rule.id, !rule.enabled)} className="gap-2">
               {rule.enabled ? (
                 <PowerOff className="h-4 w-4" aria-hidden="true" />
@@ -181,7 +195,9 @@ export function RulesTable({ rules, onToggleEnabled, onSaveRule, isSavingRule, o
           onSave={(input) => onSaveRule(rule.id, input)}
         />
       )}
-      expandAriaLabel={(rule) => `Ver detalle de ${rule.name}`}
+      hideExpandToggleColumn
+      expandedKey={expandedRuleId}
+      onExpandedKeyChange={setExpandedRuleId}
     />
   );
 }

@@ -50,7 +50,12 @@ ENV_LAYOUT: list[tuple[str, list[str]]] = [
     ),
     (
         "Public browser-facing URLs baked into whatsapp-dashboard at build time",
-        ["PUBLIC_CONNECTOR_API_URL", "PUBLIC_CONNECTOR_WS_URL", "PUBLIC_RULES_API_URL"],
+        [
+            "PUBLIC_CONNECTOR_API_URL",
+            "PUBLIC_CONNECTOR_WS_URL",
+            "PUBLIC_RULES_API_URL",
+            "PUBLIC_HTTPS_ENABLED",
+        ],
     ),
     ("Shared tenant/API credentials", ["TENANT_ID", "API_KEY_SECRET", "AUTH_ENABLED"]),
     (

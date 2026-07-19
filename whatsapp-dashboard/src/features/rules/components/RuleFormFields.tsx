@@ -29,6 +29,9 @@ import type { CreateRuleInput, ConditionField, SimpleRuleFormValues } from "@/fe
 
 const CLIENT_SIDE_MAX_SCRIPT_BYTES = 65_536;
 
+// Mirrors whatsaap-backend's schemas._SECRET_NAME_PATTERN.
+const SECRET_NAME_PATTERN = /^[A-Z][A-Z0-9_]{1,127}$/;
+
 const formSchema = z
   .object({
     name: z.string().min(1, "Requerido").max(160),
@@ -43,6 +46,7 @@ const formSchema = z
     scriptSource: z.string(),
     scriptFileName: z.string(),
     ackText: z.string().max(4096),
+    secretsInput: z.string(),
     queryBusinessCategory: z.string().max(80),
   })
   .refine((v) => v.field !== "sender" || v.senderValue.trim().length > 0, {
@@ -64,6 +68,18 @@ const formSchema = z
   .refine(
     (v) => new TextEncoder().encode(v.scriptSource).length <= CLIENT_SIDE_MAX_SCRIPT_BYTES,
     { message: "El script es demasiado grande (máx. 64 KB).", path: ["scriptSource"] },
+  )
+  .refine(
+    (v) =>
+      v.secretsInput
+        .split(",")
+        .map((name) => name.trim())
+        .filter(Boolean)
+        .every((name) => SECRET_NAME_PATTERN.test(name)),
+    {
+      message: "Cada secreto debe estar en MAYÚSCULAS_CON_GUION_BAJO (ej. MYSQL_PASSWORD).",
+      path: ["secretsInput"],
+    },
   );
 
 type FormValues = z.infer<typeof formSchema>;
@@ -102,6 +118,7 @@ export const EMPTY_RULE_FORM_VALUES: SimpleRuleFormValues = {
   scriptSource: "",
   scriptFileName: "",
   ackText: "",
+  secretsInput: "",
   queryBusinessCategory: "",
 };
 
@@ -438,6 +455,25 @@ export function RuleFormFields({
                 {errors.scriptSource.message}
               </p>
             )}
+
+            <div className="space-y-2 pt-2">
+              <Label htmlFor="rule-secrets">Secretos que necesita el script</Label>
+              <Input
+                id="rule-secrets"
+                placeholder="MYSQL_ESTADISTICAS_PASSWORD, OTRA_API_KEY"
+                {...register("secretsInput")}
+              />
+              <p className="text-xs text-muted-foreground">
+                Nombres separados por coma, en MAYÚSCULAS_CON_GUION_BAJO — deben existir ya como
+                secreto guardado. El script los lee con <code>os.environ</code>, nunca escribas el
+                valor real acá.
+              </p>
+              {errors.secretsInput && (
+                <p role="alert" className="text-sm text-destructive">
+                  {errors.secretsInput.message}
+                </p>
+              )}
+            </div>
 
             <div className="space-y-2 pt-2">
               <Label htmlFor="rule-ack-text">Mensaje inmediato (antes de correr el script)</Label>

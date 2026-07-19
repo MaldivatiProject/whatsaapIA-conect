@@ -151,6 +151,19 @@ class SqlAlchemyRuleRepository:
         ).all()
         return [self._to_domain(model) for model in models]
 
+    async def list_deleted(self, tenant_id: str) -> list[BusinessRule]:
+        models = (
+            await self._session.scalars(
+                select(BusinessRuleModel)
+                .where(
+                    BusinessRuleModel.tenant_id == tenant_id,
+                    BusinessRuleModel.expiration_date.is_not(None),
+                )
+                .order_by(BusinessRuleModel.expiration_date.desc())
+            )
+        ).all()
+        return [self._to_domain(model) for model in models]
+
     async def get(self, tenant_id: str, rule_id: UUID) -> BusinessRule | None:
         model = await self._session.scalar(
             select(BusinessRuleModel).where(
@@ -219,6 +232,23 @@ class SqlAlchemyRuleRepository:
             .values(expiration_date=datetime.now(UTC), enabled=False)
         )
         return _rowcount(result) > 0
+
+    async def restore(self, tenant_id: str, rule_id: UUID) -> BusinessRule | None:
+        # Deliberately leaves `enabled` as-is (False, set by soft_delete): restoring
+        # only undoes the deletion, it doesn't silently re-arm the rule to start
+        # matching messages again. The admin re-enables it explicitly if intended.
+        result = await self._session.execute(
+            update(BusinessRuleModel)
+            .where(
+                BusinessRuleModel.tenant_id == tenant_id,
+                BusinessRuleModel.uuid_business_rules == rule_id,
+                BusinessRuleModel.expiration_date.is_not(None),
+            )
+            .values(expiration_date=None, updated_at=datetime.now(UTC))
+        )
+        if _rowcount(result) == 0:
+            return None
+        return await self.get(tenant_id, rule_id)
 
 
 class SqlAlchemyContactIdentityRepository:

@@ -9,6 +9,8 @@ import { QrDialog } from "@/features/sessions/components/QrDialog";
 import { Card } from "@/shared/components/ui/card";
 import { Skeleton } from "@/shared/components/ui/skeleton";
 import { ErrorState } from "@/shared/components/layout/ErrorState";
+import { ConfirmDialog } from "@/shared/components/layout/ConfirmDialog";
+import { useConfirmDialog } from "@/shared/hooks/useConfirmDialog";
 
 export default function SessionsPage() {
   useSessionsLiveSync();
@@ -22,6 +24,7 @@ export default function SessionsPage() {
     deleteSession,
   } = useSessions();
   const [qrSessionId, setQrSessionId] = useState<string | null>(null);
+  const { confirm, confirmDialogProps } = useConfirmDialog();
 
   return (
     <div className="space-y-6">
@@ -44,21 +47,30 @@ export default function SessionsPage() {
           <SessionsTable
             sessions={sessions}
             onViewQr={setQrSessionId}
-            onDisconnect={(id) => {
-              if (confirm(`¿Desconectar la sesión "${id}"? Podrás reconectarla sin volver a escanear el QR.`)) {
-                disconnectSession(id);
-              }
+            onDisconnect={async (id) => {
+              const confirmed = await confirm({
+                title: `Desconectar la sesión "${id}"`,
+                description: "Podrás reconectarla sin volver a escanear el QR.",
+                confirmLabel: "Desconectar",
+                variant: "destructive",
+              });
+              if (confirmed) disconnectSession(id);
             }}
-            onDelete={(id) => {
-              if (confirm(`¿Eliminar la sesión "${id}"? Esta acción no se puede deshacer.`)) {
-                deleteSession(id);
-              }
+            onDelete={async (id) => {
+              const confirmed = await confirm({
+                title: `Eliminar la sesión "${id}"`,
+                description: "Esta acción no se puede deshacer.",
+                confirmLabel: "Eliminar",
+                variant: "destructive",
+              });
+              if (confirmed) deleteSession(id);
             }}
           />
         </Card>
       )}
 
       <QrDialog sessionId={qrSessionId} onOpenChange={(open) => !open && setQrSessionId(null)} />
+      <ConfirmDialog {...confirmDialogProps} />
     </div>
   );
 }

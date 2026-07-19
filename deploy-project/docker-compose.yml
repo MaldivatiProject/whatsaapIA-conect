@@ -31,6 +31,7 @@ x-backend: &backend
     OUTBOX_POLL_INTERVAL_SECONDS: ${OUTBOX_POLL_INTERVAL_SECONDS:-1}
     OUTBOX_MAX_ATTEMPTS: ${OUTBOX_MAX_ATTEMPTS:-10}
     OUTBOX_STALE_LOCK_SECONDS: ${OUTBOX_STALE_LOCK_SECONDS:-300}
+    SECRETS_ENCRYPTION_KEY: ${SECRETS_ENCRYPTION_KEY:?SECRETS_ENCRYPTION_KEY must be configured}
   networks:
     - whatsapp-platform
   depends_on:
@@ -295,6 +296,7 @@ services:
         NEXT_PUBLIC_CONNECTOR_WS_URL: ${PUBLIC_CONNECTOR_WS_URL:-http://localhost:3000}
         NEXT_PUBLIC_RULES_API_URL: ${PUBLIC_RULES_API_URL:-/rules-api}
         RULES_INTERNAL_API_URL: http://whatsaap-backend-api:8000
+        NEXT_PUBLIC_HTTPS_ENABLED: ${PUBLIC_HTTPS_ENABLED:-false}
     image: whatsapp-dashboard:latest
     container_name: whatsapp-dashboard
     restart: unless-stopped

@@ -1,6 +1,15 @@
 import type { NextConfig } from "next";
 
 const isDev = process.env.NODE_ENV === "development";
+// This deployment terminates plain HTTP by default (no reverse-proxy TLS in
+// front). `upgrade-insecure-requests` tells the browser to silently retry
+// every sub-resource over HTTPS — harmless on a real TLS deployment, but on
+// plain HTTP it breaks CSS/JS loading entirely for any origin the browser
+// doesn't special-case as trustworthy (this affects LAN IPs; "localhost"
+// itself is exempted by browsers, which is why this only shows up when
+// accessing the app from another device on the network). Only emit it once
+// TLS is actually configured in front of this app.
+const httpsEnabled = process.env.NEXT_PUBLIC_HTTPS_ENABLED === "true";
 const connectorApiUrl = process.env.NEXT_PUBLIC_CONNECTOR_API_URL ?? "http://localhost:3000";
 const connectorWsUrl = process.env.NEXT_PUBLIC_CONNECTOR_WS_URL ?? connectorApiUrl;
 const connectorWsAsWs = connectorWsUrl.replace(/^http/, "ws");
@@ -19,7 +28,7 @@ const cspHeader = `
   base-uri 'self';
   form-action 'self';
   frame-ancestors 'none';
-  ${isDev ? "" : "upgrade-insecure-requests;"}
+  ${isDev || !httpsEnabled ? "" : "upgrade-insecure-requests;"}
 `;
 
 const nextConfig: NextConfig = {

@@ -36,6 +36,10 @@ export function buildCreateRuleInput(values: SimpleRuleFormValues): CreateRuleIn
   const isBulk = values.actionType === "run_script_bulk";
   const isRunScript = values.actionType === "run_script" || isBulk;
   const isQuery = values.actionType === "query_traslado_status";
+  const secretNames = values.secretsInput
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean);
 
   return {
     name: values.name.trim(),
@@ -54,6 +58,7 @@ export function buildCreateRuleInput(values: SimpleRuleFormValues): CreateRuleIn
             params: {
               script: values.scriptSource,
               ...(values.ackText.trim() ? { ack_text: values.ackText.trim() } : {}),
+              ...(secretNames.length ? { secrets: secretNames } : {}),
             },
           },
         ]
@@ -86,6 +91,10 @@ export function ruleToFormValues(rule: Rule): SimpleRuleFormValues {
   const replyText = sendText ? String(sendText.params.text ?? "") : "";
   const scriptSource = runScript ? String(runScript.params.script ?? "") : "";
   const ackText = runScript ? String(runScript.params.ack_text ?? "") : "";
+  const secretsInput =
+    runScript && Array.isArray(runScript.params.secrets)
+      ? (runScript.params.secrets as unknown[]).map(String).join(", ")
+      : "";
   const queryBusinessCategory = queryTraslado
     ? String(queryTraslado.params.business_category ?? "")
     : "";
@@ -109,6 +118,7 @@ export function ruleToFormValues(rule: Rule): SimpleRuleFormValues {
     scriptSource,
     scriptFileName: scriptSource ? "script.py (cargado)" : "",
     ackText,
+    secretsInput,
     queryBusinessCategory,
   };
 

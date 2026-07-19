@@ -33,7 +33,20 @@ export interface DataTableColumn<TData> {
   headClassName?: string;
   cellClassName?: RowClassName<TData>;
   title?: string;
+  /**
+   * Progressively hides this column below the given breakpoint (mobile-first:
+   * "sm" hides only on the smallest phones, "lg" keeps it desktop-only) so
+   * narrow viewports show fewer, higher-priority columns instead of forcing
+   * horizontal scroll. Omit to always show the column.
+   */
+  hideBelow?: "sm" | "md" | "lg";
 }
+
+const HIDE_BELOW_CLASS: Record<NonNullable<DataTableColumn<unknown>["hideBelow"]>, string> = {
+  sm: "hidden sm:table-cell",
+  md: "hidden md:table-cell",
+  lg: "hidden lg:table-cell",
+};
 
 export interface DataTableExportConfig<TData> {
   title: string;
@@ -63,11 +76,17 @@ interface DataTableProps<TData> {
   exportClassName?: string;
   /**
    * Renders an inline detail panel below a row when it's expanded. Adds a
-   * leading chevron column. Only one row is expanded at a time (accordion),
-   * keyed by getRowKey — expansion survives sort/pagination automatically.
+   * leading chevron column unless hideExpandToggleColumn is set. Only one
+   * row is expanded at a time (accordion), keyed by getRowKey — expansion
+   * survives sort/pagination automatically.
    */
   renderExpanded?: (row: TData) => ReactNode;
   expandAriaLabel?: (row: TData) => string;
+  /** Omits the built-in leading chevron trigger column; pair with expandedKey/onExpandedKeyChange to trigger expansion from elsewhere (e.g. a row action menu). */
+  hideExpandToggleColumn?: boolean;
+  /** Controls which row is expanded from outside the table. Falls back to internal state when omitted. */
+  expandedKey?: string | null;
+  onExpandedKeyChange?: (key: string | null) => void;
 }
 
 function resolveClassName<TData>(className: RowClassName<TData> | undefined, row: TData) {
@@ -155,10 +174,15 @@ export function DataTable<TData>({
   exportClassName,
   renderExpanded,
   expandAriaLabel,
+  hideExpandToggleColumn,
+  expandedKey: controlledExpandedKey,
+  onExpandedKeyChange,
 }: DataTableProps<TData>) {
   const [sort, setSort] = useState<DataTableSort | null>(defaultSort ?? null);
   const [page, setPage] = useState(1);
-  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [internalExpandedKey, setInternalExpandedKey] = useState<string | null>(null);
+  const isExpansionControlled = controlledExpandedKey !== undefined;
+  const expandedKey = isExpansionControlled ? controlledExpandedKey : internalExpandedKey;
   const columnsForExport = exportColumns(columns);
   const sortedRows = useMemo(() => sortRows(rows, columns, sort), [columns, rows, sort]);
   const pageSize = pagination?.pageSize ?? 10;
@@ -168,10 +192,13 @@ export function DataTable<TData>({
     ? sortedRows.slice((safePage - 1) * pageSize, safePage * pageSize)
     : sortedRows;
   const exportRows = exportConfig?.rows ? sortRows(exportConfig.rows, columns, sort) : sortedRows;
-  const columnCount = columns.length + (renderExpanded ? 1 : 0);
+  const showExpandToggleColumn = Boolean(renderExpanded) && !hideExpandToggleColumn;
+  const columnCount = columns.length + (showExpandToggleColumn ? 1 : 0);
 
   function toggleExpanded(key: string) {
-    setExpandedKey((current) => (current === key ? null : key));
+    const next = expandedKey === key ? null : key;
+    onExpandedKeyChange?.(next);
+    if (!isExpansionControlled) setInternalExpandedKey(next);
   }
 
   function handleSort(column: DataTableColumn<TData>) {
@@ -204,7 +231,7 @@ export function DataTable<TData>({
       <Table className={tableClassName}>
         <TableHeader>
           <TableRow>
-            {renderExpanded && (
+            {showExpandToggleColumn && (
               <TableHead className="w-10 px-2">
                 <span className="sr-only">Expandir</span>
               </TableHead>
@@ -225,7 +252,11 @@ export function DataTable<TData>({
                   aria-sort={
                     isActive ? (sort.direction === "asc" ? "ascending" : "descending") : undefined
                   }
-                  className={cn(column.align === "right" && "text-right", column.headClassName)}
+                  className={cn(
+                    column.align === "right" && "text-right",
+                    column.headClassName,
+                    column.hideBelow && HIDE_BELOW_CLASS[column.hideBelow],
+                  )}
                 >
                   {sortable ? (
                     <Button
@@ -259,7 +290,7 @@ export function DataTable<TData>({
               return (
                 <Fragment key={key}>
                   <TableRow>
-                    {renderExpanded && (
+                    {showExpandToggleColumn && (
                       <TableCell className="px-2">
                         <Button
                           type="button"
@@ -284,6 +315,7 @@ export function DataTable<TData>({
                         className={cn(
                           column.align === "right" && "text-right",
                           resolveClassName(column.cellClassName, row),
+                          column.hideBelow && HIDE_BELOW_CLASS[column.hideBelow],
                         )}
                       >
                         {column.cell(row)}

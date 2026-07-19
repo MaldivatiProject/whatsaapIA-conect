@@ -1,0 +1,9 @@
+node_modules
+dist
+coverage
+/sessions
+*.log
+.git
+*.md
+.env*
+!.env.example

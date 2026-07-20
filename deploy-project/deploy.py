@@ -317,6 +317,16 @@ def init_env(assume_yes: bool = False) -> None:
         values["RABBITMQ_MANAGEMENT_PORT"] = ask(
             "Puerto publico RabbitMQ Management", values["RABBITMQ_MANAGEMENT_PORT"]
         )
+        print(
+            "\nPostgreSQL: por defecto solo escucha en 127.0.0.1 (mas seguro; para "
+            "DBeaver desde otra maquina se recomienda un tunel SSH, ver README).\n"
+            "Poner 0.0.0.0 lo expone a toda la red local para cualquiera con la "
+            "password de POSTGRES_PASSWORD."
+        )
+        values["POSTGRES_HOST_BIND"] = ask(
+            "Bind de PostgreSQL (127.0.0.1 = solo local, 0.0.0.0 = red local)",
+            values.get("POSTGRES_HOST_BIND") or "127.0.0.1",
+        )
         if ENV_FILE.exists():
             confirm = input("Actualizar .env conservando valores existentes? [Y/n]: ").strip().lower()
             if confirm in {"n", "no"}:
@@ -553,6 +563,14 @@ def deploy_up(
     print(f"Backend API:        http://localhost:{values.get('BACKEND_HOST_PORT', '8000')}")
     print(f"RabbitMQ UI:        http://localhost:{values.get('RABBITMQ_MANAGEMENT_PORT', '15672')}")
     print("API key dashboard:  valor de API_KEY_SECRET en deploy-project/.env")
+    postgres_bind = values.get("POSTGRES_HOST_BIND", "127.0.0.1")
+    postgres_port = values.get("POSTGRES_HOST_PORT", "5432")
+    print(f"PostgreSQL (DBeaver): {postgres_bind}:{postgres_port}")
+    if postgres_bind not in {"127.0.0.1", "localhost"}:
+        print(
+            "  ATENCION: POSTGRES_HOST_BIND != 127.0.0.1 -> el puerto de Postgres "
+            "queda expuesto a la red, no solo a esta maquina."
+        )
 
 
 def deploy_migrate(timeout_seconds: int) -> None:
